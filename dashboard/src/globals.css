@@ -209,6 +209,22 @@
   50% { opacity: 0.5; }
 }
 
+/* Contract: cursor blink uses step-end so the transition is instantaneous
+   (on/off) rather than a fade, matching terminal cursor behaviour. */
+@keyframes blink-cursor {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+.streaming-cursor {
+  display: inline-block;
+  width: 0.125rem;    /* w-0.5 */
+  height: 1.1em;
+  background: var(--color-brand, #6366f1);
+  vertical-align: text-bottom;
+  animation: blink-cursor 530ms step-end infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-slide-in-right,
   .animate-fade-in {
@@ -216,4 +232,5 @@
   }
   .animate-shimmer-pulse { animation: none; }
   .animate-spin-slow { animation: none; }
+  .streaming-cursor { animation: none; }
 }

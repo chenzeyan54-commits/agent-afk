@@ -1,31 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { MarkdownContent } from './markdown-content';
 
-// Contract: cursor blink uses step-end so the transition is instantaneous
-// (on/off) rather than a fade, matching terminal cursor behaviour.
-const BLINK_STYLE = `
-@keyframes blink-cursor {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0; }
-}
-.streaming-cursor {
-  display: inline-block;
-  width: 0.125rem;    /* w-0.5 */
-  height: 1.1em;
-  background: var(--color-brand, #6366f1);
-  vertical-align: text-bottom;
-  animation: blink-cursor 530ms step-end infinite;
-}
-`;
-
 /** A blinking vertical-bar cursor. Renders nothing when not needed. */
 export function StreamingCursor() {
-  return (
-    <>
-      <style>{BLINK_STYLE}</style>
-      <span className="streaming-cursor" aria-hidden="true" />
-    </>
-  );
+  return <span className="streaming-cursor" aria-hidden="true" />;
 }
 
 // Contract: CODE_FENCE_RE matches either ``` or ~~~~ at the start of a line

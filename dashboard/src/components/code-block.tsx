@@ -44,7 +44,7 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
       const supportedLangs = highlighter.getLoadedLanguages();
       const lang = language && supportedLangs.includes(language as Parameters<typeof highlighter.codeToHtml>[1]['lang'])
         ? (language as Parameters<typeof highlighter.codeToHtml>[1]['lang'])
-        : 'text';
+        : 'plaintext';
 
       try {
         const highlighted = highlighter.codeToHtml(code, {
