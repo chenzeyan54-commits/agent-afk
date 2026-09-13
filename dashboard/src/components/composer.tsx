@@ -67,7 +67,10 @@ export function Composer({
   const slashQuery = getSlashQuery(text);
   const acVisible = slashQuery !== null && commands.length > 0;
   const acFiltered = acVisible
-    ? commands.filter((c) => c.name.startsWith(slashQuery)).slice(0, 8)
+    ? commands.filter((c) => {
+        const bare = c.name.startsWith('/') ? c.name.slice(1) : c.name;
+        return bare.startsWith(slashQuery);
+      }).slice(0, 8)
     : [];
 
   // Clear the command cache when the tab regains focus so new skills are visible.
@@ -122,7 +125,7 @@ export function Composer({
   }, [sessionId]);
 
   const selectCommand = useCallback((name: string) => {
-    setText(`/${name} `);
+    setText(`${name.startsWith('/') ? name : `/${name}`} `);
     setAcActiveIdx(0);
     textareaRef.current?.focus();
   }, []);

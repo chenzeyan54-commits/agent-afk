@@ -69,7 +69,7 @@ export function SlashAutocomplete({
             onSelect(cmd.name);
           }}
         >
-          <span className="font-mono font-semibold shrink-0">/{cmd.name}</span>
+          <span className="font-mono font-semibold shrink-0">{cmd.name.startsWith('/') ? cmd.name : `/${cmd.name}`}</span>
           <span className="text-muted-foreground truncate">{cmd.summary}</span>
         </li>
       ))}
