@@ -207,6 +207,20 @@ function extractJsonArray(text: string): string | null {
   return text.slice(start, end + 1);
 }
 
+/** Maximum allowed length for description fields written into SPINE.md. */
+const MAX_DESCRIPTION_LEN = 120;
+/** Generous cap for rationale/existingDescription — not written as entry lines. */
+const MAX_RATIONALE_LEN = 500;
+
+/**
+ * Sanitize a model-returned string field: collapse embedded newlines/carriage
+ * returns to a single space (preventing multi-line SPINE.md entry injection),
+ * then trim and truncate to `maxLen`.
+ */
+function sanitizeField(value: string, maxLen: number): string {
+  return value.replace(/[\r\n]+/g, ' ').trim().slice(0, maxLen);
+}
+
 function validateItem(item: unknown): SpineClassifierItem | null {
   if (typeof item !== 'object' || item === null) return null;
   const obj = item as Record<string, unknown>;
@@ -229,8 +243,8 @@ function validateItem(item: unknown): SpineClassifierItem | null {
     return {
       label: 'new-addition',
       prefix: prefix as SpineIdPrefix,
-      description: description.trim(),
-      rationale: rationale.trim(),
+      description: sanitizeField(description, MAX_DESCRIPTION_LEN),
+      rationale: sanitizeField(rationale, MAX_RATIONALE_LEN),
     };
   }
 
@@ -249,9 +263,9 @@ function validateItem(item: unknown): SpineClassifierItem | null {
   }
   return {
     label: label as 'strengthens' | 'weakens' | 'contradicts',
-    existingId: existingId.trim(),
-    existingDescription: existingDescription.trim(),
-    description: description.trim(),
-    rationale: rationale.trim(),
+    existingId: existingId.replace(/[\r\n]+/g, ' ').trim(),
+    existingDescription: sanitizeField(existingDescription, MAX_DESCRIPTION_LEN),
+    description: sanitizeField(description, MAX_DESCRIPTION_LEN),
+    rationale: sanitizeField(rationale, MAX_RATIONALE_LEN),
   };
 }

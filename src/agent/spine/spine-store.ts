@@ -210,9 +210,8 @@ export function readSpine(repoRoot: string): SpineDocument | null {
 
 /**
  * Serialize and write a `SpineDocument` to SPINE.md at the repo root.
- * Atomic write: writes to a temp file and renames (on the same filesystem
- * this is typically atomic on POSIX). Falls back to direct write if rename
- * fails for any reason.
+ * Writes directly via `writeFileSync` (not atomic). Callers that need
+ * crash-safe durability should add a temp-file + rename layer.
  */
 export function writeSpine(repoRoot: string, doc: SpineDocument): void {
   const spineFile = join(repoRoot, SPINE_FILENAME);

@@ -5,7 +5,7 @@
  * this hook:
  *   1. Runs the diff through the spine classifier (single LLM call).
  *   2. Auto-writes `new-addition`, `strengthens`, and `weakens` items.
- *   3. Surfaces `contradicts` items via elicitation for human judgment.
+ *   3. Logs `contradicts` items to spine-pending.jsonl and emits a Telegram push for human review.
  *
  * Cost controls:
  *   - Skips subagent sessions (`parentSessionId` guard).
@@ -90,10 +90,15 @@ export function createSpineSessionEndHook(options: SpineHookOptions = {}): HookH
       if (!result.parsed || result.items.length === 0) return {};
 
       // ── Apply items ───────────────────────────────────────────────────
-      const doc = readSpine(repoRoot) ?? makeEmptyDoc();
+      // Contract: reuse the snapshot taken before classifyDiff. A second
+      // readSpine here would create a TOCTOU window — concurrent sessions
+      // writing during the ~30s classify call would have their new-addition
+      // entries clobbered by whichever session writes last.
+      const doc = currentDoc ?? makeEmptyDoc();
 
       let dirty = false;
       const contradicts: SpineRelationItem[] = [];
+      const weakenedItems: PendingLogEntry[] = [];
 
       for (const item of result.items) {
         if (item.label === 'new-addition') {
@@ -111,6 +116,14 @@ export function createSpineSessionEndHook(options: SpineHookOptions = {}): HookH
             // strengthening without creating a new entry (v1 keeps IDs stable).
             existing.description = `${existing.description} (reinforced ${new Date().toISOString().slice(0, 10)})`;
             dirty = true;
+          } else {
+            // existingId not found — log for review so hallucinated IDs are visible
+            appendSpinePending({
+              type: 'strengthens-unresolved',
+              sessionId,
+              item,
+              ts: new Date().toISOString(),
+            });
           }
           continue;
         }
@@ -122,7 +135,7 @@ export function createSpineSessionEndHook(options: SpineHookOptions = {}): HookH
             existing.description = `${existing.description} (partially weakened ${new Date().toISOString().slice(0, 10)})`;
             dirty = true;
           }
-          appendSpinePending({
+          weakenedItems.push({
             type: 'weakens',
             sessionId,
             item,
@@ -139,6 +152,11 @@ export function createSpineSessionEndHook(options: SpineHookOptions = {}): HookH
       // ── Write auto-items ──────────────────────────────────────────────
       if (dirty) {
         writeSpine(repoRoot, doc);
+      }
+
+      // ── Log weakens after successful write ────────────────────────────
+      for (const entry of weakenedItems) {
+        appendSpinePending(entry);
       }
 
       // ── Handle contradictions ─────────────────────────────────────────
@@ -182,8 +200,8 @@ function handleContradiction(
   // Best-effort Telegram notification (daemon/unattended path)
   void pushIfConfigured(
     `⚠️ SPINE conflict needs review:\n` +
-      `${item.existingId}: ${item.existingDescription}\n` +
-      `Conflict: ${item.description}\n` +
+      `${item.existingId.slice(0, 200)}: ${item.existingDescription.slice(0, 200)}\n` +
+      `Conflict: ${item.description.slice(0, 200)}\n` +
       `Run /spine pending to review.`,
   ).catch(() => undefined);
 }
