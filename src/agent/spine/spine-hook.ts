@@ -34,7 +34,7 @@ import {
   addEntry,
   findEntry,
 } from './spine-store.js';
-import { classifyDiff } from './spine-classifier.js';
+import { classifyDiff, MAX_DESCRIPTION_LEN } from './spine-classifier.js';
 import type {
   SpineClassifierItem,
   SpineRelationItem,
@@ -114,7 +114,11 @@ export function createSpineSessionEndHook(options: SpineHookOptions = {}): HookH
           if (existing) {
             // Append a parenthetical note to the description to surface the
             // strengthening without creating a new entry (v1 keeps IDs stable).
-            existing.description = `${existing.description} (reinforced ${new Date().toISOString().slice(0, 10)})`;
+            const isoDate = new Date().toISOString().slice(0, 10);
+            const suffix = ` (reinforced ${isoDate})`;
+            if (!existing.description.endsWith(suffix)) {
+              existing.description = (existing.description + suffix).slice(0, MAX_DESCRIPTION_LEN);
+            }
             dirty = true;
           } else {
             // existingId not found — log for review so hallucinated IDs are visible
@@ -132,7 +136,11 @@ export function createSpineSessionEndHook(options: SpineHookOptions = {}): HookH
           // Auto-write + log (no elicitation needed)
           const existing = findEntry(doc, item.existingId);
           if (existing) {
-            existing.description = `${existing.description} (partially weakened ${new Date().toISOString().slice(0, 10)})`;
+            const isoDate = new Date().toISOString().slice(0, 10);
+            const suffix = ` (partially weakened ${isoDate})`;
+            if (!existing.description.endsWith(suffix)) {
+              existing.description = (existing.description + suffix).slice(0, MAX_DESCRIPTION_LEN);
+            }
             dirty = true;
             weakenedItems.push({
               type: 'weakens',

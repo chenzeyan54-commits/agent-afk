@@ -150,9 +150,11 @@ function buildUserMessage(diff: string, spineContent: string): string {
   return [
     '## Git Diff (this session)',
     '',
+    '<git-diff>',
     '```diff',
     escapeCodeFence(diff),
     '```',
+    '</git-diff>',
     '',
     spineSection,
     '',
@@ -175,8 +177,10 @@ const VALID_PREFIXES = new Set<string>(['INV', 'REJ', 'TST']);
 /**
  * Parse and validate the model's JSON output. Returns a best-effort result
  * even on partial parse failures so the hook can still act on valid items.
+ *
+ * Exported for direct unit testing of the parse pipeline.
  */
-function parseClassifierOutput(raw: string): ClassifierResult {
+export function parseClassifierOutput(raw: string): ClassifierResult {
   // Extract JSON array from the raw output — the model may wrap it in markdown
   const jsonStr = extractJsonArray(raw);
   if (!jsonStr) {
@@ -204,25 +208,45 @@ function parseClassifierOutput(raw: string): ClassifierResult {
 }
 
 function extractJsonArray(text: string): string | null {
-  // Strip markdown code fences — but only when the fenced content is a JSON
+  // Strip markdown code fences — prefer fenced content when it is a valid JSON
   // array. If the model emits a non-JSON fence first (e.g. a ```diff block),
   // fall through to the bare-array scan so we don't return unparseable content.
   const fenceMatch = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
   if (fenceMatch) {
     const content = (fenceMatch[1] ?? '').trim();
-    if (content.startsWith('[')) return content;
-    // Fence was not a JSON array — fall through to bare-array scan below.
+    if (content.startsWith('[')) {
+      // Prefer fenced content only when it parses successfully as a JSON array
+      try {
+        const parsed = JSON.parse(content);
+        if (Array.isArray(parsed)) return content;
+      } catch {
+        // Fenced content did not parse — fall through to bare-array scan
+      }
+    }
+    // Fence was not a parseable JSON array — fall through to bare-array scan below.
   }
 
-  // Find the outermost [ ... ]
+  // Find the outermost [ ... ] and walk leftward on parse failure so trailing
+  // prose that contains ']' does not permanently break the extraction.
   const start = text.indexOf('[');
-  const end = text.lastIndexOf(']');
-  if (start === -1 || end === -1 || end <= start) return null;
-  return text.slice(start, end + 1);
+  if (start === -1) return null;
+
+  let end = text.lastIndexOf(']');
+  while (end > start) {
+    const candidate = text.slice(start, end + 1);
+    try {
+      const parsed = JSON.parse(candidate);
+      if (Array.isArray(parsed)) return candidate;
+    } catch {
+      // Not valid JSON — try the next ']' to the left
+    }
+    end = text.lastIndexOf(']', end - 1);
+  }
+  return null;
 }
 
 /** Maximum allowed length for description fields written into SPINE.md. */
-const MAX_DESCRIPTION_LEN = 120;
+export const MAX_DESCRIPTION_LEN = 120;
 /** Generous cap for rationale/existingDescription — not written as entry lines. */
 const MAX_RATIONALE_LEN = 500;
 

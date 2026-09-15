@@ -13,7 +13,7 @@
  * @module agent/spine/spine-store
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, renameSync, existsSync } from 'fs';
 import { join } from 'path';
 
 // ---------------------------------------------------------------------------
@@ -218,13 +218,17 @@ export function readSpine(repoRoot: string): SpineDocument | null {
 
 /**
  * Serialize and write a `SpineDocument` to SPINE.md at the repo root.
- * Writes directly via `writeFileSync` (not atomic). Callers that need
- * crash-safe durability should add a temp-file + rename layer.
+ *
+ * Uses an atomic write: serializes to a PID-namespaced temp file in the same
+ * directory as SPINE.md, then `renameSync`s it into place. This ensures that
+ * a process kill mid-write never leaves SPINE.md in a partially-written state.
  */
 export function writeSpine(repoRoot: string, doc: SpineDocument): void {
   const spineFile = join(repoRoot, SPINE_FILENAME);
+  const tmpFile = `${spineFile}.tmp.${process.pid}`;
   const content = serializeSpine(doc);
-  writeFileSync(spineFile, content, 'utf-8');
+  writeFileSync(tmpFile, content, 'utf-8');
+  renameSync(tmpFile, spineFile);
 }
 
 /**
