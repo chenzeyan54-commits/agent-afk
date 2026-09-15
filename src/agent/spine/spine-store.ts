@@ -91,6 +91,10 @@ export function parseSpine(content: string): SpineDocument {
     /^- \*\*([A-Z]+-\d+)\*\* \((\d{4}-\d{2}-\d{2}), ([^)]+)\): (.+)$/;
   // Regex: ## Section Name
   const headingRe = /^## (.+)$/;
+  // Canonical preamble lines (title + blockquote) that appear before the first
+  // section heading. serializeSpine regenerates these on every write, so they
+  // must be skipped here to prevent duplication on round-trip parse+serialize.
+  const PREAMBLE_RE = /^(# SPINE\.md|> Auto-maintained)/;
 
   for (const line of lines) {
     const headingMatch = headingRe.exec(line);
@@ -122,6 +126,10 @@ export function parseSpine(content: string): SpineDocument {
     // Not a known structural line — accumulate in trailer unless inside a
     // known section (where blank/comment lines are swallowed).
     if (!currentSection || inTrailer) {
+      // Skip canonical preamble lines that appear before the first section
+      // heading — serializeSpine regenerates these, so capturing them here
+      // would cause duplication on every round-trip write.
+      if (!currentSection && !inTrailer && PREAMBLE_RE.test(line)) continue;
       trailerLines.push(line);
     }
     // Blank lines inside a known section are silently dropped on

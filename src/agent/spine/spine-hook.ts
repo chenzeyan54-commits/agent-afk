@@ -73,7 +73,7 @@ export function createSpineSessionEndHook(options: SpineHookOptions = {}): HookH
     const sessionId = context.sessionId ?? 'unknown-session';
 
     try {
-      const repoRoot = options.repoRoot ?? resolveRepoRoot(process.cwd());
+      const repoRoot = resolveRepoRoot(options.repoRoot ?? process.cwd());
 
       // ── Git diff guard ────────────────────────────────────────────────
       const diff = getGitDiff(repoRoot);
@@ -134,13 +134,21 @@ export function createSpineSessionEndHook(options: SpineHookOptions = {}): HookH
           if (existing) {
             existing.description = `${existing.description} (partially weakened ${new Date().toISOString().slice(0, 10)})`;
             dirty = true;
+            weakenedItems.push({
+              type: 'weakens',
+              sessionId,
+              item,
+              ts: new Date().toISOString(),
+            });
+          } else {
+            // existingId not found — log as unresolved so hallucinated IDs are visible
+            weakenedItems.push({
+              type: 'weakens-unresolved',
+              sessionId,
+              item,
+              ts: new Date().toISOString(),
+            });
           }
-          weakenedItems.push({
-            type: 'weakens',
-            sessionId,
-            item,
-            ts: new Date().toISOString(),
-          });
           continue;
         }
 
@@ -163,8 +171,24 @@ export function createSpineSessionEndHook(options: SpineHookOptions = {}): HookH
       for (const contradiction of contradicts) {
         handleContradiction(contradiction, sessionId);
       }
-    } catch {
-      // Best-effort: never block teardown.
+    } catch (err) {
+      // Best-effort: never block teardown, but log for debugging.
+      try {
+        const stateDir = getAfkStateDir();
+        mkdirSync(stateDir, { recursive: true });
+        appendFileSync(
+          join(stateDir, 'spine-pending.jsonl'),
+          JSON.stringify({
+            type: 'hook-error',
+            sessionId,
+            error: err instanceof Error ? err.message : String(err),
+            ts: new Date().toISOString(),
+          }) + '\n',
+          'utf-8',
+        );
+      } catch {
+        // Truly best-effort — even logging failed.
+      }
     }
 
     return {};
@@ -224,14 +248,19 @@ function resolveRepoRoot(cwd: string): string {
 
 function getGitDiff(repoRoot: string): string {
   try {
-    return execFileSync('git', ['diff', 'HEAD~1', '--unified=0'], {
+    // Use `git diff HEAD` (no commit ref) to capture uncommitted working-tree
+    // changes made during this session. If the session committed its changes,
+    // this returns empty (correct fast-exit for v1: committed work is visible
+    // in the next session's diff via HEAD~1 at that point). Using HEAD~1 would
+    // incorrectly re-classify the previous commit on sessions that commit nothing.
+    return execFileSync('git', ['diff', 'HEAD', '--unified=0'], {
       cwd: repoRoot,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       maxBuffer: 2 * 1024 * 1024, // 2 MB cap
     });
   } catch {
-    // No previous commit (initial commit) or git error — treat as empty
+    // No commits yet or git error — treat as empty
     return '';
   }
 }

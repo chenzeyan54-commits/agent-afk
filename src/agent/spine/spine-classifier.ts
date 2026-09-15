@@ -134,6 +134,14 @@ export async function classifyDiff(
 // Prompt assembly
 // ---------------------------------------------------------------------------
 
+/**
+ * Escape triple-backtick sequences so a diff containing ``` cannot break out
+ * of the enclosing code fence in the prompt (prompt injection guard).
+ */
+function escapeCodeFence(text: string): string {
+  return text.replace(/```/g, '` ` `');
+}
+
 function buildUserMessage(diff: string, spineContent: string): string {
   const spineSection = spineContent.trim()
     ? `## Current SPINE.md\n\n${spineContent}`
@@ -143,7 +151,7 @@ function buildUserMessage(diff: string, spineContent: string): string {
     '## Git Diff (this session)',
     '',
     '```diff',
-    diff,
+    escapeCodeFence(diff),
     '```',
     '',
     spineSection,
@@ -196,9 +204,15 @@ function parseClassifierOutput(raw: string): ClassifierResult {
 }
 
 function extractJsonArray(text: string): string | null {
-  // Strip markdown code fences
+  // Strip markdown code fences — but only when the fenced content is a JSON
+  // array. If the model emits a non-JSON fence first (e.g. a ```diff block),
+  // fall through to the bare-array scan so we don't return unparseable content.
   const fenceMatch = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
-  if (fenceMatch) return (fenceMatch[1] ?? '').trim();
+  if (fenceMatch) {
+    const content = (fenceMatch[1] ?? '').trim();
+    if (content.startsWith('[')) return content;
+    // Fence was not a JSON array — fall through to bare-array scan below.
+  }
 
   // Find the outermost [ ... ]
   const start = text.indexOf('[');
@@ -263,7 +277,7 @@ function validateItem(item: unknown): SpineClassifierItem | null {
   }
   return {
     label: label as 'strengthens' | 'weakens' | 'contradicts',
-    existingId: existingId.replace(/[\r\n]+/g, ' ').trim(),
+    existingId: sanitizeField(existingId, MAX_DESCRIPTION_LEN),
     existingDescription: sanitizeField(existingDescription, MAX_DESCRIPTION_LEN),
     description: sanitizeField(description, MAX_DESCRIPTION_LEN),
     rationale: sanitizeField(rationale, MAX_RATIONALE_LEN),
