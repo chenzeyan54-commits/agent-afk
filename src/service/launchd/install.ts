@@ -294,7 +294,7 @@ export function upgradeService(name: ServiceName, opts: InstallOptions = {}): Up
   try {
     // Best-effort cleanup of stale tmp from a prior crash.
     if (existsSync(tmpPath)) unlinkSync(tmpPath);
-    writeFileSync(tmpPath, desired, { encoding: 'utf-8', flag: 'wx', mode: 0o600 });
+    writeFileSync(tmpPath, desired, { encoding: 'utf-8', flag: 'w', mode: 0o600 });
   } catch (err) {
     return { kind: 'failed', reason: `Failed to write upgraded plist (tmp ${tmpPath}): ${(err as Error).message}` };
   }
