@@ -238,7 +238,7 @@ export async function runFirstRunDetector(argv: string[] = process.argv): Promis
 }
 
 // Parse and execute — only when run directly as CLI (not imported by tests)
-import { realpathSync } from 'fs';
+import { realpathSync, writeSync } from 'fs';
 const argv1 = process.argv[1] ?? '';
 const isDirectRun =
   import.meta.url === `file://${argv1}` ||
@@ -311,16 +311,16 @@ if (isDirectRun) {
       triggerAutoUpdate(updateInfo.latestVersion);
     }
 
-    // Early-exit version flag — must precede parseAsync() so stdout flushes on
-    // Windows before process.exit tears down the pipe. Commander's internal
-    // handler calls process.stdout.write then immediately process.exit(0); on
-    // Windows non-TTY pipes (PowerShell capture, GitHub Actions) libuv uses
-    // completion-port I/O so the write is queued but not confirmed before exit
-    // tears down the process. The write callback is the only API surface where
-    // Node guarantees the data has been delivered to the OS.
+    // Early-exit version flag — must precede parseAsync() so Commander never
+    // handles --version itself. On Windows non-TTY pipes (PowerShell capture,
+    // GitHub Actions), both process.stdout.write and console.log go through
+    // libuv completion-port I/O — the write is queued but not confirmed before
+    // process.exit tears down the pipe. fs.writeSync(1, ...) bypasses the
+    // stream layer entirely and issues a blocking WriteFile syscall, so the
+    // data is on the pipe before the process exits regardless of platform.
     if (process.argv.includes('--version') || process.argv.includes('-V')) {
-      process.stdout.write(getVersion() + '\n', () => process.exit(0));
-      return;
+      writeSync(1, getVersion() + '\n');
+      process.exit(0);
     }
 
     program.parseAsync(process.argv).catch((err) => {
