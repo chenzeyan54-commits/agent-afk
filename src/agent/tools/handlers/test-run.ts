@@ -14,7 +14,7 @@
  */
 
 import { spawn } from 'child_process';
-import { dirname } from 'path';
+import { dirname, isAbsolute, sep } from 'path';
 import type { ToolHandler, ToolHandlerContext } from '../types.js';
 import { discoverTestCommand, type DiscoveredRunner } from './test-run-discovery.js';
 import { detectTestResult } from './test-runner-detector.js';
@@ -108,7 +108,7 @@ function buildArgv(
         // go test takes a package path, not a file; use the file's dir.
         // path.dirname() handles both / and \ separators (Windows-safe).
         const dir = dirname(file);
-        const pkg = dir === '.' ? './...' : dir;
+        const pkg = dir === '.' ? './...' : isAbsolute(dir) ? dir : `.${sep}${dir}`;
         argv[argv.length - 1] = pkg; // replace ./...
       }
       if (name) argv.push('-run', name);
