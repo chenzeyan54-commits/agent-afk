@@ -312,15 +312,14 @@ if (isDirectRun) {
     }
 
     // Early-exit version flag — must precede parseAsync() so Commander never
-    // handles --version itself. On Windows non-TTY pipes (PowerShell capture,
-    // GitHub Actions), both process.stdout.write and console.log go through
-    // libuv completion-port I/O — the write is queued but not confirmed before
-    // process.exit tears down the pipe. fs.writeSync(1, ...) bypasses the
-    // stream layer entirely and issues a blocking WriteFile syscall, so the
-    // data is on the pipe before the process exits regardless of platform.
+    // handles --version itself. On Windows, PowerShell's pipe capture
+    // (| Out-String) drops stdout when process.exit() fires — even with
+    // fs.writeSync, because PowerShell's pipeline teardown races with the
+    // child process exit. Avoiding process.exit() entirely lets Node drain
+    // stdout naturally and PowerShell reads the full buffer.
     if (process.argv.includes('--version') || process.argv.includes('-V')) {
       writeSync(1, getVersion() + '\n');
-      process.exit(0);
+      return;
     }
 
     program.parseAsync(process.argv).catch((err) => {
