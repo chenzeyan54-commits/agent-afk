@@ -313,14 +313,14 @@ if (isDirectRun) {
 
     // Early-exit version flag — must precede parseAsync() so stdout flushes on
     // Windows before process.exit tears down the pipe. Commander's internal
-    // handler calls process.stdout.write (async on Windows non-TTY pipes via
-    // libuv completion ports) then immediately process.exit(0), so the write
-    // may never flush. console.log goes through the same write path but Node's
-    // stream drain logic ensures the buffer is flushed before exit when we call
-    // process.exit(0) ourselves in the same tick after the write is queued.
+    // handler calls process.stdout.write then immediately process.exit(0); on
+    // Windows non-TTY pipes (PowerShell capture, GitHub Actions) libuv uses
+    // completion-port I/O so the write is queued but not confirmed before exit
+    // tears down the process. The write callback is the only API surface where
+    // Node guarantees the data has been delivered to the OS.
     if (process.argv.includes('--version') || process.argv.includes('-V')) {
-      console.log(getVersion());
-      process.exit(0);
+      process.stdout.write(getVersion() + '\n', () => process.exit(0));
+      return;
     }
 
     program.parseAsync(process.argv).catch((err) => {
