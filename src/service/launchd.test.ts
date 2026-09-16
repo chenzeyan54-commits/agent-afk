@@ -56,6 +56,7 @@ import {
   SERVICE_NAMES,
   serviceStatus,
   uninstallService,
+  upgradeService,
 } from './launchd.js';
 
 describe.skipIf(process.platform !== 'darwin')('labelFor', () => {
@@ -131,6 +132,8 @@ describe.skipIf(process.platform !== 'darwin')('renderPlist', () => {
     });
     expect(xml).toContain('<key>WatchPaths</key>');
     expect(xml).toContain('<string>/h/dist/telegram.mjs</string>');
+    // ThrottleInterval must always be emitted regardless of options (F-02).
+    expect(xml).toContain('<key>ThrottleInterval</key>');
   });
 
   it('emits EnvironmentVariables with sorted keys for stable diffs', () => {
@@ -658,6 +661,65 @@ describe.skipIf(process.platform !== 'darwin')('install/uninstall/status I/O', (
       // re-install.
       expect(result.kind).toBe('uninstalled');
       expect(existsSync(path)).toBe(false);
+    });
+  });
+
+  describe('upgradeService', () => {
+    it('returns not-installed when plist is absent', () => {
+      const result = upgradeService('telegram');
+      expect(result.kind).toBe('not-installed');
+    });
+
+    it('returns already-current when on-disk plist matches rendered output', () => {
+      // Install the service first so we have a valid on-disk plist.
+      mockExecFileSync.mockReturnValue('' as never);
+      const installResult = installService('telegram', { _entrypointExistsCheck: () => true });
+      expect(installResult.kind).toBe('installed');
+
+      // Upgrade should detect the plist is already current.
+      const result = upgradeService('telegram', { _entrypointExistsCheck: () => true });
+      expect(result.kind).toBe('already-current');
+      if (result.kind !== 'already-current') return;
+      expect(result.label).toBe('com.afk.telegram');
+    });
+
+    it('atomically replaces plist when on-disk content differs (e.g. missing ThrottleInterval)', () => {
+      // Seed a stale plist that lacks ThrottleInterval — simulates a
+      // user who installed before this key was added.
+      const launchAgentsDir = join(tmpHome, 'Library', 'LaunchAgents');
+      const fsModule = require('fs') as typeof import('fs');
+      fsModule.mkdirSync(launchAgentsDir, { recursive: true });
+      const path = plistPath('telegram', tmpHome);
+      writeFileSync(path, '<plist><dict><key>Label</key><string>com.afk.telegram</string></dict></plist>');
+
+      mockExecFileSync.mockReturnValue('' as never);
+      const result = upgradeService('telegram', { _entrypointExistsCheck: () => true });
+      expect(result.kind).toBe('upgraded');
+      if (result.kind !== 'upgraded') return;
+
+      // The upgraded plist must contain ThrottleInterval.
+      const contents = readFileSync(path, 'utf-8');
+      expect(contents).toContain('<key>ThrottleInterval</key>');
+      expect(contents).toContain('<integer>30</integer>');
+      expect(contents).toContain('<key>Label</key>');
+
+      // Tmp file must be cleaned up.
+      expect(existsSync(`${path}.tmp`)).toBe(false);
+    });
+
+    it('preserves 0o600 mode on upgraded plist', () => {
+      const launchAgentsDir = join(tmpHome, 'Library', 'LaunchAgents');
+      const fsModule = require('fs') as typeof import('fs');
+      fsModule.mkdirSync(launchAgentsDir, { recursive: true });
+      const path = plistPath('telegram', tmpHome);
+      writeFileSync(path, '<old-plist/>', { mode: 0o600 });
+
+      mockExecFileSync.mockReturnValue('' as never);
+      const result = upgradeService('telegram', { _entrypointExistsCheck: () => true });
+      expect(result.kind).toBe('upgraded');
+
+      const mode = statSync(path).mode & 0o777;
+      expect(mode).toBe(0o600);
     });
   });
 

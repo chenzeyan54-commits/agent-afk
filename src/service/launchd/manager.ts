@@ -25,9 +25,10 @@ import type {
   ServiceRestartOutcome,
   ServiceStatus,
   ServiceUninstallOutcome,
+  ServiceUpgradeOutcome,
 } from '../types.js';
 import { guiDomain, LAUNCHCTL_TIMEOUT_MS, labelFor, plistPath, serviceLogPath } from './paths.js';
-import { installService, readPlistFile, uninstallService } from './install.js';
+import { installService, readPlistFile, uninstallService, upgradeService } from './install.js';
 import { serviceStatus } from './status.js';
 
 export const launchdManager: ServiceManager = {
@@ -82,10 +83,36 @@ export const launchdManager: ServiceManager = {
     };
   },
 
+  upgrade(name: ServiceName, opts: ServiceInstallOptions = {}): ServiceUpgradeOutcome {
+    const result = upgradeService(name, {
+      noWatch: opts.noWatch ?? false,
+      ...(opts.environment ? { environment: opts.environment } : {}),
+    });
+    if (result.kind === 'upgraded') {
+      return { kind: 'upgraded', configPath: result.plistPath, label: result.label };
+    }
+    if (result.kind === 'already-current') {
+      return { kind: 'already-current', configPath: result.plistPath, label: result.label };
+    }
+    if (result.kind === 'not-installed') {
+      return { kind: 'not-installed', configPath: result.plistPath };
+    }
+    return { kind: 'failed', reason: result.reason };
+  },
+
   restart(name: ServiceName): ServiceRestartOutcome {
     if (!this.isInstalled(name)) {
       return { kind: 'not-installed', configPath: plistPath(name) };
     }
+
+    // Invariant: before restarting the process, ensure the on-disk plist
+    // matches what the current code would render. Without this, a version
+    // upgrade that adds new plist keys (e.g. ThrottleInterval) only takes
+    // effect for fresh installs, and existing users remain on the old
+    // config indefinitely. The upgrade is best-effort: a failure to
+    // re-render the plist should not block the restart itself.
+    try { upgradeService(name); } catch { /* best-effort */ }
+
     // M-5: process.getuid is undefined on non-POSIX; on darwin it always
     // exists, but assert explicitly so a misuse surfaces here rather than
     // as a confusing launchctl "no such domain" error.
