@@ -154,7 +154,7 @@ export interface InputSurfaceArmOpts {
    * model swaps reflect immediately. Forwarded to the compositor
    * as its `promptText` getter.
    */
-  promptFn: () => string;
+  promptFn: (buffer: string) => string;
   /**
    * Stable cancel handler — called when the user presses Ctrl+C in
    * any mode. The REPL passes its `handleSigint` here; that function

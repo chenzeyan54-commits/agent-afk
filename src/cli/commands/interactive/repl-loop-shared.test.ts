@@ -55,6 +55,11 @@ describe('buildPrompt', () => {
     }
   });
 
+  it('switches to a shell prompt when the live buffer starts with `!`', () => {
+    expect(strip(buildPrompt('default', '!git status'))).toBe('afk  $ ');
+    expect(strip(buildPrompt('default', ' !git status'))).toBe('afk  › ');
+  });
+
   it('renders the caret in the brand tone, not dim', () => {
     // The caret was lifted from `dim` to `brand` so the input point reads as a
     // deliberate affordance. Lock the tone (glyph is covered by the tests above)
