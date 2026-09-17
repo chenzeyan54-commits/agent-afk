@@ -154,7 +154,7 @@ export function renderInputLine(self: RenderHost): string {
     // ellipsis: a ghost is a silent hint, not a labelled truncation.
     const truncated = truncateDisplayWidth(remainder, budget, '');
     if (truncated.length > 0) {
-      ghostSuffix = palette.meta(truncated);
+      ghostSuffix = shellGhost !== null ? palette.meta(truncated) : palette.dim(truncated);
     }
   }
   return self.promptTextFn(self.input.buffer) + before + caret + after + ghostSuffix + suffix;
@@ -164,7 +164,7 @@ export function renderInputLine(self: RenderHost): string {
 function shellModeGhost(buffer: string): string | null {
   if (buffer === '!') return 'command';
   if (!buffer.startsWith('!')) return null;
-  if (buffer.startsWith('!&') && buffer.slice(2).trim().length > 0) {
+  if (buffer.startsWith('!&')) {
     return '  (shell: background)';
   }
   return '  (shell)';

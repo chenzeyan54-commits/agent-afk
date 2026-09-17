@@ -51,7 +51,7 @@ describe('buildPrompt', () => {
 
   it('always ends with the caret', () => {
     for (const mode of ['default', 'plan', 'autonomous', 'bypassPermissions'] as const) {
-      expect(strip(buildPrompt(mode))).toMatch(/› $/);
+      expect(strip(buildPrompt(mode))).toMatch(/[›$] $/);
     }
   });
 

@@ -323,7 +323,7 @@ export async function runInputLoop(
         const initialBuffer = prefillBuffer;
         prefillBuffer = undefined;
         const result = await surface.readLine({
-          promptFn: () => buildPrompt(ctx.stats.permissionMode),
+          promptFn: (buffer) => buildPrompt(ctx.stats.permissionMode, buffer),
           ...(initialBuffer !== undefined ? { initialBuffer } : {}),
           // This is THE turn-boundary prompt — the one "what should I do next"
           // moment in the loop, and the only read that opts into an

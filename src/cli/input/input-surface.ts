@@ -87,7 +87,7 @@ export interface InputSurfaceOptions {
 }
 
 export interface InputSurfaceReadOpts {
-  promptFn: () => string;
+  promptFn: (buffer?: string) => string;
   onSigint?: () => void;
   /** Called for a single Escape on the compositor (TTY) path. */
   onEscape?: () => void;
@@ -580,7 +580,7 @@ export class InputSurface {
           const echoText = payload.displayText ?? payload.text;
           const echo = formatSubmittedEcho({
             buffer: colorizeInputBuffer(echoText, this.slashRegistryView),
-            promptText: opts.promptFn(),
+            promptText: opts.promptFn(echoText),
             isTTY: Boolean(echoStdout.isTTY),
             attachmentSummary: describeAttachmentSummary([...payload.attachments]),
           });

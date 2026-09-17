@@ -122,6 +122,7 @@ describe('renderInputLine — shell mode', () => {
     ['!', 'command'],
     ['!git status', '  (shell)'],
     ['!&pnpm test', '  (shell: background)'],
+    ['!&', '  (shell: background)'],
   ])('renders the fixed ghost hint for %s', (buffer, hint) => {
     const line = renderInputLine(makeInputHost({
       buffer,
