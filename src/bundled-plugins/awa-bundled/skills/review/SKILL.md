@@ -47,14 +47,14 @@ Never fabricate intent. When none is available the value is the literal `(none s
 **Capture prior reviewer feedback (inline, PR targets only).** When the review target is a PR URL or number, fetch existing reviewer feedback from all three GitHub comment stores before dispatching Wave 1:
 
 1. Inline review comments (anchored to diff lines): `gh api repos/{owner}/{repo}/pulls/<n>/comments --paginate`.
-2. Review summary bodies (top-level body per review submission): `gh pr view <n> --json reviews -q '.reviews[] | {author: .author.login, state: .state, body: .body}'`.
-3. Conversation comments (issue-level PR comments): `gh pr view <n> --json comments -q '.comments[] | {author: .author.login, body: .body}'`.
+2. Review summary bodies (top-level body per review submission): `gh pr view <n> -R {owner}/{repo} --json reviews -q '.reviews[] | {author: .author.login, state: .state, body: .body, submittedAt: .submittedAt}'`.
+3. Conversation comments (issue-level PR comments): `gh pr view <n> -R {owner}/{repo} --json comments -q '.comments[] | {author: .author.login, body: .body, createdAt: .createdAt}'`.
 
-Extract `{owner}/{repo}` from `gh pr view <n> --json url -q .url` or parse the PR URL argument directly.
+Extract `{owner}/{repo}` from the PR URL argument directly, or for bare-number inputs from `gh pr view <n> --json url -q .url`. Pass `-R {owner}/{repo}` on every `gh pr view` call above so cross-repo PR URLs resolve in the correct repository.
 
-Filter: drop bot/automation comments (author login contains `[bot]` or body is empty/whitespace). Cap to the **20 most recent** comments across all three stores, truncated to a combined **4,096 tokens** to prevent context-window bloat on busy PRs. Identify afk's own prior review comments by the `<!-- agent-afk-review -->` marker.
+Filter: drop bot/automation comments (author login contains `[bot]` or body is empty/whitespace). Merge all three stores into a single array, sort by timestamp descending (`created_at` / `submittedAt` / `createdAt`), then cap to the **20 most recent** comments, truncated to a combined **4,096 tokens** to prevent context-window bloat on busy PRs. Identify afk's own prior review comments by the `<!-- agent-afk-review -->` marker.
 
-Bundle surviving comments as a **`prior-reviewer-feedback`** block: `[{ source: "inline"|"review"|"conversation", author, body, path?, line? }]`. When the PR has no prior comments, set `prior-reviewer-feedback: none`.
+Bundle surviving comments as a **`prior-reviewer-feedback`** block: `[{ source: "inline"|"review"|"conversation", author, body, timestamp, path?, line? }]`. When the PR has no prior comments, set `prior-reviewer-feedback: none`.
 
 For non-PR targets (`--staged`, `--head`, working-tree, patch-file, bare commit SHA, branch with no open PR), skip this step and set `prior-reviewer-feedback: not available — non-PR target`.
 
@@ -122,10 +122,10 @@ This is the agent's first-line self-check; **Wave 1.5 Check B** independently re
 
 Returns a combined verification manifest: `[{type: citation|absence, claim, status, finding_id, evidence?}]`. Findings classified `fabricated` (citation) or `false-absent` (absence) are excluded from Wave 2 input. `diff-only` citations are passed to Wave 2 with a `⚠ diff-only citation — line absent at the reviewed ref` annotation and auto-downgraded one severity tier. `grep-unavailable` absence claims are passed through with their `[UNVERIFIED]` tag intact.
 
-**Wave 2 — Synthesis (1 agent, `subagent_type: "research-agent"`).** Receives: Wave 1 findings **after** citation-verification filtering + manifest of dropped/downgraded citations + **the merge-decision rule and its counts format below**. Wave 2 emits the verdict, so it needs that rule for exactly the reason Wave 1 needs the blocking table: an agent told to produce an output whose format and threshold it was never given will improvise both. Dedup by `(file, line_range, dimension)` — keep highest severity on exact match. Flag cross-agent conflicts as `CONFLICT` blocks (surface both rationales; do not auto-resolve).
+**Wave 2 — Synthesis (1 agent, `subagent_type: "research-agent"`).** Receives: Wave 1 findings **after** citation-verification filtering + manifest of dropped/downgraded citations + **the `prior-reviewer-feedback` block** (when available) + **the merge-decision rule and its counts format below**. Wave 2 emits the verdict, so it needs that rule for exactly the reason Wave 1 needs the blocking table: an agent told to produce an output whose format and threshold it was never given will improvise both. Dedup by `(file, line_range, dimension)` — keep highest severity on exact match. Flag cross-agent conflicts as `CONFLICT` blocks (surface both rationales; do not auto-resolve).
 
 **Prior-feedback dedup (cross-run).** After intra-run dedup, compare each surviving finding against the `prior-reviewer-feedback` block. Decision rubric:
-- The **diff contains evidence** that the concern was addressed (removed line, added guard, new test) → downgrade finding to `info` severity with annotation `[addressed since prior review]`. Do not suppress entirely — the reviewer sees the resolution.
+- The **diff contains evidence** that the concern was addressed (removed line, added guard, new test) → downgrade finding to `low` severity with `blocking: false` and annotation `[addressed since prior review]`. This is an explicit override of the assignment-order invariant: the pre-downgrade `blocking` value does **not** carry through, because the concern is resolved and surfacing it as blocking defeats the purpose of recognizing the fix. Do not suppress entirely — the reviewer sees the resolution.
 - A prior comment (from afk or a human reviewer) **raised the same concern** and the author **acknowledged and deferred** it (e.g. "I'll fix this in a follow-up") → tag finding `[previously raised — author deferred]` and preserve its original severity. Do not re-raise the argument; note the deferral.
 - A prior comment **raised the same concern** but the issue **persists unchanged in the current diff** → preserve the finding at its earned severity with annotation `[persists from prior review]`. Never suppress a real issue because a prior comment exists.
 - No match in prior feedback → emit the finding unchanged.
