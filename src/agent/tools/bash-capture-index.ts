@@ -26,6 +26,7 @@
 import { readdir, stat, open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getWitnessRoot } from '../../paths.js';
+import { stripEscapeSequences } from '../../utils/terminal-sanitize.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -91,7 +92,13 @@ async function extractPreview(filePath: string): Promise<string> {
     const { bytesRead } = await fh.read(buf, 0, PREVIEW_READ_BYTES, 0);
     if (bytesRead === 0) return '(empty capture)';
 
-    const text = buf.subarray(0, bytesRead).toString('utf8');
+    const raw = buf.subarray(0, bytesRead).toString('utf8');
+    // Strip ANSI/OSC/CSI escape sequences — capture files contain raw
+    // subprocess output that could replay attacker-controlled terminal
+    // sequences when rendered by `afk captures list`.
+    // Uses stripEscapeSequences (not sanitizeForDisplay) to preserve
+    // newline structure for per-line iteration.
+    const text = stripEscapeSequences(raw);
     // Find the first non-empty line.
     for (const line of text.split('\n')) {
       const trimmed = line.trimEnd();
@@ -144,50 +151,65 @@ export async function listCaptures(options: ListCapturesOptions = {}): Promise<C
     sessionDirs = sessionDirs.filter((d) => d === filterSession);
   }
 
-  // Collect all entries across sessions.
+  // Collect metadata (stat only — no file opens) across sessions,
+  // then sort and preview only the limited entries. This avoids
+  // opening every capture file concurrently, which would exhaust the
+  // process's file-descriptor limit with large capture sets.
+  const metadata: Array<Omit<CaptureEntry, 'preview'>> = [];
+
+  // Invariant: process sessions in batches to avoid EMFILE from too
+  // many concurrent readdir + stat calls across thousands of sessions.
+  const SESSION_BATCH_SIZE = 20;
+  for (let i = 0; i < sessionDirs.length; i += SESSION_BATCH_SIZE) {
+    const batch = sessionDirs.slice(i, i + SESSION_BATCH_SIZE);
+    await Promise.all(
+      batch.map(async (sid) => {
+        const capturesDir = join(witnessRoot, sid, 'bash-captures');
+        let files: string[];
+        try {
+          files = await readdir(capturesDir);
+        } catch {
+          // No bash-captures dir for this session, or unreadable — skip.
+          return;
+        }
+
+        await Promise.all(
+          files
+            .filter((f) => f.endsWith('.txt'))
+            .map(async (fname) => {
+              const filePath = join(capturesDir, fname);
+              let fileStat: Awaited<ReturnType<typeof stat>>;
+              try {
+                fileStat = await stat(filePath);
+                if (!fileStat.isFile()) return;
+              } catch {
+                return;
+              }
+
+              const toolUseId = fname.slice(0, -4); // strip ".txt"
+              metadata.push({
+                sessionId: sid,
+                toolUseId,
+                filePath,
+                mtimeMs: fileStat.mtimeMs,
+                sizeBytes: fileStat.size,
+              });
+            }),
+        );
+      }),
+    );
+  }
+
+  // Sort newest first, then take only the limited entries for preview.
+  metadata.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const topEntries = metadata.slice(0, limit);
+
+  // Now open only the limited set of files for preview extraction.
   const entries: CaptureEntry[] = [];
+  for (const meta of topEntries) {
+    const preview = await extractPreview(meta.filePath);
+    entries.push({ ...meta, preview });
+  }
 
-  await Promise.all(
-    sessionDirs.map(async (sid) => {
-      const capturesDir = join(witnessRoot, sid, 'bash-captures');
-      let files: string[];
-      try {
-        files = await readdir(capturesDir);
-      } catch {
-        // No bash-captures dir for this session, or unreadable — skip.
-        return;
-      }
-
-      await Promise.all(
-        files
-          .filter((f) => f.endsWith('.txt'))
-          .map(async (fname) => {
-            const filePath = join(capturesDir, fname);
-            let fileStat: Awaited<ReturnType<typeof stat>>;
-            try {
-              fileStat = await stat(filePath);
-              if (!fileStat.isFile()) return;
-            } catch {
-              return;
-            }
-
-            const toolUseId = fname.slice(0, -4); // strip ".txt"
-            const preview = await extractPreview(filePath);
-
-            entries.push({
-              sessionId: sid,
-              toolUseId,
-              filePath,
-              mtimeMs: fileStat.mtimeMs,
-              sizeBytes: fileStat.size,
-              preview,
-            });
-          }),
-      );
-    }),
-  );
-
-  // Sort newest first, then apply the limit.
-  entries.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  return entries.slice(0, limit);
+  return entries;
 }
