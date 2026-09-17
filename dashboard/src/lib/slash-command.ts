@@ -10,5 +10,5 @@ export function formatSlashCommandName(name: string): string {
 
 /** Match the bare query extracted from the composer against a command name. */
 export function slashCommandMatchesQuery(name: string, query: string): boolean {
-  return bareSlashCommandName(name).startsWith(query);
+  return bareSlashCommandName(name).startsWith(bareSlashCommandName(query));
 }
