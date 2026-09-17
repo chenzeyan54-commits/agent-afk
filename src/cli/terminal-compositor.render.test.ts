@@ -133,6 +133,41 @@ describe('renderInputLine — shell mode', () => {
     expect(stripAnsi(line)).toBe(`$ ${buffer}${THIN_BAR}${hint}`);
   });
 
+  it('renders shell ghost hints in palette.meta, not palette.dim', () => {
+    const previousLevel = palette.meta.level;
+    palette.meta.level = 3;
+    try {
+      const line = renderInputLine(makeInputHost({
+        buffer: '!git status',
+        cursor: '!git status'.length,
+        activeGhost: '!git status --verbose',
+        promptTextFn: () => '$ ',
+      }));
+      // Shell ghost hints use palette.meta (dim gray) — not palette.dim —
+      // to read as a secondary hint distinct from the shell input tone.
+      expect(line).toContain(palette.meta('  (shell)'));
+      expect(line).not.toContain(palette.dim('  (shell)'));
+    } finally {
+      palette.meta.level = previousLevel;
+    }
+  });
+
+  it('renders non-shell ghost suggestions in palette.dim', () => {
+    const previousLevel = palette.dim.level;
+    palette.dim.level = 3;
+    try {
+      const line = renderInputLine(makeInputHost({
+        buffer: 'hello',
+        cursor: 5,
+        activeGhost: 'hello world',
+      }));
+      // Non-shell (history/LLM) ghosts use palette.dim — the pre-existing tone.
+      expect(line).toContain(palette.dim(' world'));
+    } finally {
+      palette.dim.level = previousLevel;
+    }
+  });
+
   it('colors both sides of a mid-buffer caret with the shell tone', () => {
     const previousLevel = palette.shell.level;
     palette.shell.level = 3;

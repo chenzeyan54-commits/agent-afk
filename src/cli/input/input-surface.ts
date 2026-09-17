@@ -87,7 +87,7 @@ export interface InputSurfaceOptions {
 }
 
 export interface InputSurfaceReadOpts {
-  promptFn: (buffer?: string) => string;
+  promptFn: (buffer: string) => string;
   onSigint?: () => void;
   /** Called for a single Escape on the compositor (TTY) path. */
   onEscape?: () => void;
@@ -625,7 +625,10 @@ export class InputSurface {
     // Non-TTY fallback: delegate to the existing reader.
     return readWithAutocomplete({
       rl: this.rl,
-      promptFn: opts.promptFn,
+      // Non-TTY reader calls promptFn() with no arg (static prompt — no live
+      // buffer repainting). Wrap to satisfy the optional-param type while
+      // forwarding the buffer when available (defaults to '' in buildPrompt).
+      promptFn: (buffer?: string) => opts.promptFn(buffer ?? ''),
       ...(opts.initialBuffer !== undefined ? { initialBuffer: opts.initialBuffer } : {}),
       ...(opts.onSigint ? { onSigint: opts.onSigint } : {}),
       ...(opts.onShiftTab ? { onShiftTab: opts.onShiftTab } : {}),

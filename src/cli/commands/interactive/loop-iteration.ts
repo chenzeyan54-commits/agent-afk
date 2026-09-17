@@ -304,7 +304,7 @@ export async function runInputLoop(
         // readLine echo path so scrollback parity holds).
         const queued = seedBuffer;
         seedBuffer = undefined;
-        const prompt = buildPrompt(ctx.stats.permissionMode);
+        const prompt = buildPrompt(ctx.stats.permissionMode, queued.text);
         const echo = formatSubmittedEcho({
           buffer: queued.text,
           promptText: prompt,
