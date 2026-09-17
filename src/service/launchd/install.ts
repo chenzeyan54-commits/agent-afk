@@ -248,9 +248,9 @@ export function uninstallService(name: ServiceName, opts: { skipBootout?: boolea
  * on-disk plist without requiring a manual uninstall/reinstall cycle.
  *
  * Write atomicity: same tmp+rename pattern as `installService()`.
- * The `wx` flag is NOT used here because we expect the tmp path to be
- * absent, but a stale tmp from a prior crashed upgrade is cleaned up
- * before the write attempt.
+ * Uses `wx` (O_EXCL) like `installService()` to close the TOCTOU
+ * symlink window; catches EEXIST from a stale crash-leftover tmp
+ * and retries once after cleanup.
  */
 export function upgradeService(name: ServiceName, opts: InstallOptions = {}): UpgradeResult {
   const path = plistPath(name);
@@ -284,19 +284,35 @@ export function upgradeService(name: ServiceName, opts: InstallOptions = {}): Up
   const desired = renderPlist(plistOpts);
 
   // Compare to on-disk content. If identical, no-op.
-  const current = readFileSync(path, 'utf-8');
+  // Invariant: readFileSync is wrapped so upgradeService() never throws —
+  // callers (manager.restart, postinstall) rely on result-only returns.
+  let current: string;
+  try {
+    current = readFileSync(path, 'utf-8');
+  } catch (err) {
+    return { kind: 'failed', reason: `Failed to read current plist: ${(err as Error).message}` };
+  }
   if (current === desired) {
     return { kind: 'already-current', plistPath: path, label: labelFor(name) };
   }
 
-  // Atomic write: clean up any stale tmp, write new, rename into place.
+  // Atomic write: O_EXCL (wx) to close the TOCTOU symlink window at the
+  // predictable tmp path. On EEXIST (stale crash leftover), clean up and
+  // retry once — same defense-in-depth as installService().
   const tmpPath = `${path}.tmp`;
   try {
-    // Best-effort cleanup of stale tmp from a prior crash.
-    if (existsSync(tmpPath)) unlinkSync(tmpPath);
-    writeFileSync(tmpPath, desired, { encoding: 'utf-8', flag: 'w', mode: 0o600 });
-  } catch (err) {
-    return { kind: 'failed', reason: `Failed to write upgraded plist (tmp ${tmpPath}): ${(err as Error).message}` };
+    writeFileSync(tmpPath, desired, { encoding: 'utf-8', flag: 'wx', mode: 0o600 });
+  } catch (firstErr) {
+    if ((firstErr as NodeJS.ErrnoException).code === 'EEXIST') {
+      try { unlinkSync(tmpPath); } catch { /* ignore cleanup failure */ }
+      try {
+        writeFileSync(tmpPath, desired, { encoding: 'utf-8', flag: 'wx', mode: 0o600 });
+      } catch (retryErr) {
+        return { kind: 'failed', reason: `Failed to write upgraded plist (tmp ${tmpPath}): ${(retryErr as Error).message}` };
+      }
+    } else {
+      return { kind: 'failed', reason: `Failed to write upgraded plist (tmp ${tmpPath}): ${(firstErr as Error).message}` };
+    }
   }
   try {
     renameSync(tmpPath, path);
