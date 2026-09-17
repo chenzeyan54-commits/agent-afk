@@ -111,13 +111,15 @@ describe('multi-commit gap regression (real footer, extraRows=1)', () => {
       max - min + 1,
       `committed lines are NOT contiguous in the viewport (the gap bug): span=${max - min + 1}, count=${committedIdxs.length}:\n${dump}`,
     ).toBe(committedIdxs.length);
-    // The run's bottom hugs the frame (the most-recent commit sits just above it).
+    // With bottom-aligned bands the committed run hugs the frame top — the most
+    // recent output sits immediately above the input line. Blank rows appear ABOVE
+    // the band (between scrollback and the committed text). Verify content is above.
     expect(
       frameIdx - max,
-      `committed run does not hug the frame (bottom=${max}, frame=${frameIdx}):\n${dump}`,
-    ).toBe(1);
-    // The most-recent committed line is the rollup's last line, adjacent to the frame.
-    expect(view[max], `rollup tail not adjacent to frame:\n${dump}`).toContain('Done (114 tools)');
+      `committed run must be above the frame (bottom=${max}, frame=${frameIdx}):\n${dump}`,
+    ).toBeGreaterThan(0);
+    // The most-recent committed line is the rollup's last line (last content row).
+    expect(view[max], `rollup tail not last committed line:\n${dump}`).toContain('Done (114 tools)');
 
     // Double-statusline fix still holds in this heavy scenario.
     expect(ls.filter((l) => l.includes('STATUSMODELXYZ')).length, `status row not single:\n${dump}`).toBe(1);

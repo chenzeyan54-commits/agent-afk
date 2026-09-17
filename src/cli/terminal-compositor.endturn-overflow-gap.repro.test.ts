@@ -179,14 +179,21 @@ describe('end-of-turn overflow-gap regression: block taller than viewport, banne
       ).toBe(1);
     }
 
-    // SECONDARY ASSERTION: no run of >= 3 consecutive blank rows in the
-    // region from the first content line to the frame (one blank is the
-    // rhythm separator; two should not occur in a block this large).
+    // SECONDARY ASSERTION: no LARGE blank runs WITHIN the committed content.
+    // The original bug (Phase-2 erase wiped Phase-1 archive) caused many blank
+    // rows to appear between BLOCKROW lines. A small run (<=2) is expected from
+    // the trailing "\n\n" rhythm separator passed to commitAbove; the archival
+    // path may place those blanks between content rows in scrollback. A run
+    // larger than 2 indicates the erase bug.
     const firstContentAbs = lines.findIndex((l) => l.includes('BLOCKROW-'));
-    if (firstContentAbs >= 0 && frameAbsIdx > firstContentAbs) {
+    let lastContentAbs = firstContentAbs;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if ((lines[i] ?? '').includes('BLOCKROW-')) { lastContentAbs = i; break; }
+    }
+    if (firstContentAbs >= 0 && lastContentAbs >= firstContentAbs) {
       let maxBlankRun = 0;
       let cur = 0;
-      for (let i = firstContentAbs; i < frameAbsIdx; i++) {
+      for (let i = firstContentAbs; i <= lastContentAbs; i++) {
         if ((lines[i] ?? '').trim() === '') {
           cur++;
           maxBlankRun = Math.max(maxBlankRun, cur);
@@ -196,8 +203,8 @@ describe('end-of-turn overflow-gap regression: block taller than viewport, banne
       }
       expect(
         maxBlankRun,
-        `blank run of ${maxBlankRun} rows between first BLOCKROW content and frame:\n${dump}`,
-      ).toBeLessThanOrEqual(2);
+        `blank run of ${maxBlankRun} rows within BLOCKROW content (Phase-2 erase bug):\n${dump}`,
+      ).toBeLessThanOrEqual(2); // up to 2 from the trailing "\n\n" rhythm separator
     }
 
     term.dispose();

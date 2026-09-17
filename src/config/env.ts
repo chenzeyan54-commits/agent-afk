@@ -60,6 +60,7 @@ export type EnvVarCategory =
   | 'routing'
   | 'browser'
   | 'process'
+  | 'display'
   | 'misc';
 
 export interface EnvVarMeta {
@@ -177,6 +178,18 @@ export const ENV_REGISTRY = [
     default: '0',
     example: '1',
     category: 'process',
+  },
+  {
+    name: 'AFK_DISABLE_SPINE_UPDATE',
+    description:
+      'Disable the SPINE.md SessionEnd hook when set to 1. The hook runs a single LLM call at the ' +
+      'end of each top-level session to classify architectural signals in the git diff against ' +
+      'SPINE.md. Set to 1 to opt out globally (useful in CI or when the LLM call is unwanted).',
+    type: 'boolean',
+    required: false,
+    default: '0',
+    example: '1',
+    category: 'misc',
   },
   {
     name: 'AFK_FORCE_BASH_INTERPRETER_GUARD',
@@ -1238,6 +1251,15 @@ export const ENV_REGISTRY = [
     required: false,
     example: '0',
     category: 'misc',
+  },
+  {
+    name: 'AFK_STREAM_BUFFER_MS',
+    description: 'Input buffer window for TUI streaming in milliseconds. When set to a positive value, incoming tokens are micro-batched before parsing and rendering, producing smoother visual output. The first token after idle always passes through immediately (leading-edge). 0 = disabled (every token is parsed individually). Reasonable range: 8-50.',
+    type: 'number',
+    required: false,
+    default: '0',
+    example: '16',
+    category: 'display',
   },
   {
     name: 'AFK_SKILL_STREAM_VERBOSE',

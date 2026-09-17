@@ -11,6 +11,198 @@ auto-release workflow to deduplicate commits across successive runs.
 
 ## [Unreleased]
 
+## [5.215.2] - 2026-09-17
+
+### Fixed
+- use repo default merge strategy instead of hardcoding --squash (#1704) (61cc0c7f)
+
+## [5.215.1] - 2026-09-17
+
+### Fixed
+- bound elicitation route registry growth (#1700) (c765fce2)
+
+## [5.215.0] - 2026-09-17
+
+### Added
+- offer to merge docs/test-only PRs after MERGE verdict (#1703) (36d3ee8e)
+
+## [5.214.1] - 2026-09-17
+
+### Fixed
+- drain micro-buffer before terminal-state inspection (#1701) (2b7b8835)
+
+### Changed
+- track initialized SPINE.md for agent-afk repo (7670e286)
+
+## [5.214.0] - 2026-09-17
+
+### Added
+- read SPINE.md in ground-state pre-flight (#1699) (f2f1a8a6)
+
+## [5.213.3] - 2026-09-17
+
+### Fixed
+- make /spine init actually populate entries from codebase artifacts (#1698) (38152c80)
+
+## [5.213.2] - 2026-09-17
+
+### Fixed
+- widen /spine init grep to cover all documented comment prefixes and file types (#1697) (9f7977ae)
+
+## [5.213.1] - 2026-09-17
+
+### Fixed
+- add plist upgrade path for existing installs (#1686) (d196ed8e)
+
+## [5.213.0] - 2026-09-17
+
+### Added
+- 150ms glyph flash on tool completion (#1691) (3a88c42f)
+- live tok/s momentum ticker in status line (#1690) (1e5126e4)
+
+## [5.212.12] - 2026-09-17
+
+### Fixed
+- callback-gated exit for Windows --version + widen watch.test timing budget (#1689) (1de4bcdd)
+
+## [5.212.11] - 2026-09-16
+
+### Fixed
+- close SQLite handle before test cleanup + flush --version on Windows pipes (23f5a98a)
+
+## [5.212.10] - 2026-09-16
+
+### Fixed
+- periodic sessionData eviction and elicitation route cleanup (#1657, #1662) (#1668) (d9ed4479)
+
+## [5.212.9] - 2026-09-16
+
+### Fixed
+- prevent watchdog suspension ceiling stacking (#1660) (#1665) (59e059ba)
+
+## [5.212.8] - 2026-09-16
+
+### Fixed
+- resolve stacked Windows smoke test failures (pnpm ENOENT + dashboard deps) (#1685) (fe1ea69d)
+
+## [5.212.7] - 2026-09-16
+
+### Fixed
+- revert top-aligned band to bottom-aligned (#1670 regression) (#1684) (999925e5)
+
+## [5.212.6] - 2026-09-16
+
+### Fixed
+- add manifest gate and scoped re-review to reduce cycling (#1680) (990dcf5c)
+
+## [5.212.5] - 2026-09-16
+
+### Fixed
+- resolve remaining umber references and add UserDefaults migration (#1681) (98306679)
+
+## [5.212.4] - 2026-09-16
+
+### Fixed
+- update stale BANNER_LINE_10 assertion in PTY scrollback test (#1683) (3ef0f7b3)
+
+### Changed
+- add end-to-end CLI smoke test (#1603) (#1638) (7cf76048)
+
+## [5.212.3] - 2026-09-16
+
+### Fixed
+- normalize CRLF to LF in esbuild prompt-inlining plugin (#1682) (0a2eb930)
+- replace POSIX path assumptions with platform-agnostic APIs (#1600) (#1642) (35c80942)
+
+### Changed
+- bump react-dom and @types/react-dom in /website (#1652) (9c2ab252)
+
+## [5.212.2] - 2026-09-15
+
+### Fixed
+- top-align committed band to eliminate dropdown gap (#1670) (1e34de69)
+
+## [5.212.1] - 2026-09-15
+
+### Fixed
+- remove blank row at top of scrollback history (#1674) (a229e376)
+
+## [5.212.0] - 2026-09-15
+
+### Added
+- parallel-first scheduling posture (#1676) (12b25e09)
+
+## [5.211.0] - 2026-09-15
+
+### Added
+- agent-maintained SPINE.md (#17) (#1649) (9b71939c)
+
+## [5.210.0] - 2026-09-15
+
+### Added
+- word-by-word ghost acceptance via Right arrow (#1673) (693d5f9d)
+
+## [5.209.5] - 2026-09-15
+
+### Changed
+- extract shared Collapse component (#1648) (#1667) (f0bc0279)
+
+## [5.209.4] - 2026-09-15
+
+### Added
+- persistent cross-session objective tracking (#1632) (2467ad19)
+
+### Fixed
+- use os.userInfo().uid fallback in guiDomain() (#1661) (#1664) (d3967925)
+
+## [5.209.3] - 2026-09-15
+
+### Fixed
+- warn about systemd >= 240 requirement for log output (#1659) (#1669) (7a9c606c)
+
+### Changed
+- bump react and @types/react in /website (#1653) (6ed00fbc)
+
+## [5.209.2] - 2026-09-15
+
+### Added
+- add AFK_STREAM_BUFFER_MS for smoother streaming output (#1671) (126772d3)
+
+### Fixed
+- close leaked FDs in start() (#1656) (#1663) (fe23c824)
+
+### Changed
+- bump the fumadocs group in /website with 2 updates (#1650) (ef2c14ce)
+
+## [5.209.1] - 2026-09-14
+
+### Fixed
+- boost docs site favicon palette for small-size legibility (#1655) (a3d3997b)
+
+### Changed
+- bump @types/node from 26.4.1 to 26.5.1 in /website (#1651) (d2601bb9)
+
+## [5.209.0] - 2026-09-13
+
+### Added
+- overhaul chat UI with topology spine (#1635) (d0af56f9)
+
+## [5.208.4] - 2026-09-12
+
+### Added
+- add read-only Settings view with config API endpoint (#1581) (#1640) (12678d25)
+
+### Fixed
+- add debug logging for closeTab window.close() limitation (#1628) (#1636) (0c0430a7)
+
+### Changed
+- add workspace persistence decision record — won't-fix (#1541) (#1639) (a6ffff01)
+
+## [5.208.3] - 2026-09-12
+
+### Fixed
+- drop envelope fallback in call<T>() for void-result methods (#1629) (#1637) (04705f23)
+
 ## [5.208.2] - 2026-09-11
 
 ### Fixed

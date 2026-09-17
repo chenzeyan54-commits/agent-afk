@@ -12,6 +12,7 @@ import { infoCommands } from './commands/info.js';
 import { planCmd } from './commands/plan.js';
 import { afkCmd } from './commands/afk.js';
 import { todoCmd } from './commands/todo.js';
+import { goalCmd } from './commands/goal.js';
 import { nameCmd } from './commands/name.js';
 import { resumeCmd } from './commands/resume.js';
 import { forkCmd } from './commands/fork.js';
@@ -39,6 +40,7 @@ import { copyCmd } from './commands/copy.js';
 import { configDoctorCommands } from './commands/config-doctor.js';
 import { ghostCmd } from './commands/ghost.js';
 import { suggestionsCmd } from './commands/suggestions.js';
+import { spineCmd } from './commands/spine.js';
 import { registerStaticPluginSkillCommands } from './plugin-skills.js';
 import { registerStaticPluginAgentCommands } from './plugin-agents.js';
 import { registerBuiltinSkillCommands } from './builtin-skills.js';
@@ -52,6 +54,7 @@ export function registerAll(): void {
   register(planCmd);
   register(afkCmd);
   register(todoCmd);
+  register(goalCmd);
   register(nameCmd);
   register(resumeCmd);
   register(forkCmd);
@@ -78,6 +81,7 @@ export function registerAll(): void {
   for (const cmd of configDoctorCommands) register(cmd);
   register(ghostCmd);
   register(suggestionsCmd);
+  register(spineCmd);
   // Placeholders for plugin-backed commands. The real lists get registered
   // after `session.waitForInitialization()` resolves, via
   // `registerPluginSkills(session)` / `registerPluginAgents(session)` in

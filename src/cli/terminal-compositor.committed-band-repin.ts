@@ -44,6 +44,23 @@ export function flushResizeGhostErase(self: CommittedBandHost): void {
   } catch {
     /* terminal closed mid-resize — next render's lifecycle tears us down */
   }
+  // The ghost-erase range [top, bottom] may overlap the band's tracked rows.
+  // If so, the on-screen content is gone and the tracking pointers are stale.
+  // Reset them to 0 so repositionCommittedBand detects `moved = true` and
+  // repaints the band at its new position, rather than treating the erased
+  // rows as still-valid and skipping the repaint.
+  // Invariant: use interval-intersection (any overlap triggers reset), not
+  // full containment — a partial erase that clips only part of the band still
+  // invalidates the tracked pointers.
+  if (
+    self.committedBand.length > 0 &&
+    self.committedBandBottomRow > 0 &&
+    self.committedBandTopRow <= bottom &&
+    self.committedBandBottomRow >= top
+  ) {
+    self.committedBandTopRow = 0;
+    self.committedBandBottomRow = 0;
+  }
 }
 
 /**
@@ -101,9 +118,8 @@ export function repositionCommittedBand(
   // left the whole band in place (it fits) or already scrolled the overflow
   // into scrollback and recorded the survivors — in both cases the survivors
   // belong at [targetBottom - fit + 1, targetBottom], which the fit math below
-  // computes. (Banner case keeps the legacy scroll-and-shift, which lands the
-  // band at targetBottom too.) The paint is always above the frame top, so it
-  // never overwrites the live frame.
+  // computes. The paint is always above the frame top, so it never overwrites
+  // the live frame.
   if (targetBottom < floor) return; // F2: band exists but has NO room above the
   // current floor — do NOT clear bandGeometryStale here: committedBandBottomRow
   // is left at its old (possibly stale) value below, so a later commit must
@@ -116,6 +132,15 @@ export function repositionCommittedBand(
   const maxFit = targetBottom - floor + 1;
   const fit = Math.min(self.committedBand.length, maxFit);
   if (fit <= 0) return;
+  // Invariant (bottom-aligned band): the band is pinned at
+  // [targetBottom - fit + 1, targetBottom] so committed content hugs the frame
+  // top — the user's most recent output sits immediately above the input line
+  // with no visual gap. Any blank rows (when the band is shorter than the
+  // available room) sit ABOVE the band, between scrollback and the committed
+  // text; that region is not normally visible without scrolling. The statefulness
+  // guarantee is unchanged: the entire [floor, targetBottom] region is
+  // erased-and-repainted as a pure function of (committedBand, floor,
+  // targetBottom).
   const newTop = targetBottom - fit + 1;
   const moved = newTop !== self.committedBandTopRow || targetBottom !== self.committedBandBottomRow;
   // The render's erase pass clears [preRenderFrameTop, …]; if it started at or
@@ -134,11 +159,9 @@ export function repositionCommittedBand(
   // scrollback-gap "void": rows a prior eager-scroll/eviction left painted while
   // the tracked top drifted below them) is erased unconditionally, so it is
   // gap-free by construction rather than by trusting the incremental
-  // `committedBandTopRow` adjacency. The class invariant guarantees
-  // `committedBand` is the SOLE committed content in [floor, targetBottom]
-  // (committed-band-commit.ts:513-519), so nothing legitimate is cleared; the
-  // banner/anchor above `floor` is never touched. Rows [floor, newTop) are all
-  // blank after this loop; [newTop, targetBottom] are repainted below.
+  // `committedBandTopRow` adjacency. The banner/anchor above `floor` is never
+  // touched. When fit === maxFit the band fills all available room, so
+  // newTop === floor and this loop is a no-op — paint below starts immediately.
   for (let r = floor; r < newTop; r++) {
     out += eraseAndPaintRow(r);
   }

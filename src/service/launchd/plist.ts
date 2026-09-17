@@ -52,9 +52,9 @@ function xmlEscape(s: string): string {
  * Invariants:
  *   - `RunAtLoad` = true: start on login.
  *   - `KeepAlive` = true: relaunch on any exit (crash, OOM, manual kill).
- *   - `ThrottleInterval` = 30: minimum seconds between relaunches, so a
- *     bot that exits immediately on every start does not crash-loop at the
- *     system default rate (10 s) with no operator-visible backoff.
+ *   - `ThrottleInterval` = 30 s: raises minimum restart interval from
+ *     launchd's 10 s default to 30 s, giving operators a wider window
+ *     to react before the next respawn.
  *   - Per-job `ProcessType=Interactive` keeps it lively in the foreground
  *     QoS class — daemon background QoS would throttle Node's GC.
  *

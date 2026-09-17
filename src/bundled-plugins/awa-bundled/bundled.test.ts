@@ -69,8 +69,16 @@ const PINNED_HASHES = {
   // in #943. No upstream counterpart — bundled-only.
   'false-completion-gate':
     '9b0d90e150a9a4690c713d1063dd1901ce5b659d33b6c9f12b74e44b3d0163ce',
+  // Hash bumped: PR #1680 — Phase 3.5 manifest gate + Phase 6 --brief re-review scoping.
+  // Hash re-bumped: resolve review — aggregation-before-redispatch + commit on invariant-only-cap path.
+  // Hash re-bumped: resolve review findings — clarify commit ownership (subagent no longer commits),
+  //   fix Phase 3.5 scope-check gap (add --cached to catch staged files), mandate Phase 3.5
+  //   re-run after each Phase 4 re-dispatch.
+  // Hash re-bumped: resolve review — Phase 2.5 switched from compose to parallel agent calls
+  //   (compose nodes lack agent_type/cwd), Phase 3.5 unverified-invariant cap path tightened
+  //   (no longer commits unconditionally with unverified invariants).
   'fix-pr':
-    'c89030fd9ab9200d9676ee503ae3db7e06fcb862d52a55eb67cb85786e585ff9',
+    '3eacfbf593256786755b633fbab2f9a4c97eea6eb0669747b1ea44af533c7bdc',
   // gather + parallelize carry a bundled-only `context: load` frontmatter line
   // (2026-06 skill-execution-mode work). `context` is an agent-afk-specific
   // field; Claude Code upstream skills are natively inline/progressive-disclosure,
@@ -86,7 +94,7 @@ const PINNED_HASHES = {
   // wave keeps dispatching). The upstream ground-state has neither layer, so
   // both lines are permanent bundled-only divergence.
   'ground-state':
-    '5c924f6a685e50fa40650f62fdbc163d4acc02a5155dc35807dc52b7536e9025',
+    'b12e20fe6c6429eb43073f719c6e367de78efdadd51083adf28036da8966eb1a',
 
   polish:
     '03c7d8d1f593d4aca3327247d5c226e957bae84982b8a438c5834ba74ee4184c',
@@ -112,7 +120,7 @@ const PINNED_HASHES = {
   // external-constraint rule it contradicted, and put the merge-decision rule
   // in Wave 2's receives list.
   // Full rationale: docs/bundled-plugins.md#review-726
-  review: 'a669d27cb892247dc010f2ff24fcc4baf9469afeea2150773558206848820bb1',
+  review: '0a1db393fadc55d0497d6d9fc26a7fb8ba1e4801b9c460f6b0fc4c9013eabd6f',
   // History: /shadow-verify gained the confidence-trigger + composition-axis
   // verdicts (#52, #187).
   // Hash re-bumped: search-surface sharing + explicit verifier budgets (#995).

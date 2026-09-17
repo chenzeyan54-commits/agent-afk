@@ -2,7 +2,7 @@
 
 Generated from `src/config/env.ts`. Do not edit by hand — run `pnpm scan:env` after changing the registry source.
 
-**181 vars** across 12 categories. Every `process.env[...]` read in `src/` outside `src/config/env.ts` is a CI failure (enforced by `pnpm audit:env:check`).
+**183 vars** across 13 categories. Every `process.env[...]` read in `src/` outside `src/config/env.ts` is a CI failure (enforced by `pnpm audit:env:check`).
 
 To add a var: edit `src/config/env.ts` (add a getter on `env` + an entry in `ENV_REGISTRY`), then run `pnpm scan:env`.
 
@@ -157,6 +157,12 @@ To add a var: edit `src/config/env.ts` (add a getter on `env` + an entry in `ENV
 | `AFK_BROWSER_HEADLESS` | boolean |  |  | `1` | Override the default headless mode for native browser-control tools. `1`/`true` forces headless; `0`/`false` forces headed. When unset the default is headless on every AFK surface — the CLI entrypoint reports surface `afk`, which is in the headless set — so watching the agent work in a visible window is opt-in via `AFK_BROWSER_HEADLESS=0`, not implied by running the REPL. Note headed and headless use different chromium downloads (`chromium-*` vs `chromium_headless_shell-*`). |
 | `AFK_SESSION_ID` | string |  | `default` | `session-abc123` | Override the browser session ID used by the native browser-control tools. Defaults to 'default' for single-session use. Subagents inherit the parent's session by default. Set this when running multiple concurrent AFK processes that should each manage an isolated browser context. |
 
+## Display
+
+| Name | Type | Required | Default | Example | Description |
+|------|------|----------|---------|---------|-------------|
+| `AFK_STREAM_BUFFER_MS` | number |  | `0` | `16` | Input buffer window for TUI streaming in milliseconds. When set to a positive value, incoming tokens are micro-batched before parsing and rendering, producing smoother visual output. The first token after idle always passes through immediately (leading-edge). 0 = disabled (every token is parsed individually). Reasonable range: 8-50. |
+
 ## Debug
 
 | Name | Type | Required | Default | Example | Description |
@@ -223,6 +229,7 @@ To add a var: edit `src/config/env.ts` (add a getter on `env` + an entry in `ENV
 | `AFK_BG_AUTO_DELIVER` | boolean |  | `1` | `0` | Auto-deliver background subagent results into the model context on the next user turn (interactive REPL). On by default. Set to 0, false, off, or no (case-insensitive) to disable, restoring the manual /bgsub:join retrieval flow. |
 | `AFK_DEMO_CLEAN` | boolean |  |  | `1` | Explicit opt-in to capture-mode. When set to 1, suppresses high-frequency repaint drivers (spinner ticker, live thinking-preview) so recorded artifacts contain each state once instead of once per timer tick. |
 | `AFK_DIFF_LINES` | number |  |  | `50` | Maximum number of diff lines shown in the inline diff render during write_file tool calls. Set to 0 for no cap. Non-integer values are silently ignored and the default applies. |
+| `AFK_DISABLE_SPINE_UPDATE` | boolean |  | `0` | `1` | Disable the SPINE.md SessionEnd hook when set to 1. The hook runs a single LLM call at the end of each top-level session to classify architectural signals in the git diff against SPINE.md. Set to 1 to opt out globally (useful in CI or when the LLM call is unwanted). |
 | `AFK_GOBLIN_MASCOT` | boolean |  |  | `1` | Reacting goblin mini-sprite in the reserved footer band while the agent runs tools (3 rows, animated). 1 = on, unset/0 = off (default). Claims terminal rows, so it is opt-in. |
 | `AFK_GOBLIN_SPINNER` | boolean |  |  | `0` | Goblin-themed working spinner (olive frames + goblin verbs) while the agent runs tools. 1 = on (default), 0 = classic dim spinner. |
 | `AFK_LEASE_TTL_MS` | number |  |  | `600000` | Lease TTL in milliseconds for durable task execution (issue #1411). A leased task whose lease expires before it completes is recovered and re-enqueued (or dead-lettered if maxAttempts is exhausted). Default: 600000 (10 minutes). |

@@ -103,7 +103,7 @@ describe('Stage 2 (#540) render-not-repin: stateless window re-render', () => {
       anchorRow: 1, // floor = 1
     });
 
-    // Repaint geometry pins the 3-row band at rows [6,8]:
+    // Repaint geometry: bottom-aligned band at [6, 8]:
     //   desiredTopRow=9 → targetBottom=8; floor=1 → maxFit=8 → fit=3 → newTop=6.
     // moved = (newTop 6 !== committedBandTopRow 5) → true, so it repaints.
     repositionCommittedBand(host, /* desiredTopRow */ 9, /* preRenderFrameTop */ 0, /* targetBottomRow */ 23);
@@ -121,18 +121,19 @@ describe('Stage 2 (#540) render-not-repin: stateless window re-render', () => {
       .map((l, i) => `[${String(i).padStart(2)}] ${JSON.stringify(l.replace(/\s+$/, ''))}`)
       .join('\n');
 
-    // (1) The band is re-rendered hugging the frame at rows 6..8 (0-based 5..7).
+    // (1) The band is re-rendered bottom-aligned at rows 6..8 (0-based 5..7).
     expect(lines.some((l) => l.includes('BAND-A row')), `band not rendered:\n${dump}`).toBe(true);
     expect(lines.some((l) => l.includes('BAND-C row')), `band not rendered:\n${dump}`).toBe(true);
 
     // (2) THE STAGE-2 PROPERTY: the stranded row above the drifted tracked top
-    //     must be GONE — cleared from the floor, not left as a void.
+    //     must be GONE — cleared by the above-band erase, not left as a void.
     expect(
       lines.some((l) => l.includes('STRANDED-VOID-ROW')),
       `stranded row above the drifted tracked top survived — the scrollback-gap void:\n${dump}`,
     ).toBe(false);
 
-    // (3) The whole region above the band [rows 1..5 → 0-based 0..4] is blank.
+    // (3) The region ABOVE the band [rows 1..5 → 0-based 0..4] is blank
+    //     (bottom-aligned: blanks above band, content hugs frame top).
     for (let i = 0; i <= 4; i++) {
       expect((lines[i] ?? '').trim(), `row ${i + 1} not blank above the band:\n${dump}`).toBe('');
     }
@@ -160,7 +161,7 @@ describe('Stage 2 (#540) render-not-repin: stateless window re-render', () => {
       anchorRow: 3, // floor = 3 → erase starts at row 3, banner at 1..2 untouched
     });
 
-    // desiredTopRow=9 → targetBottom=8; floor=3 → fit=2 → newTop=7.
+    // desiredTopRow=9 → targetBottom=8; floor=3 → maxFit=6 → fit=2 → newTop=7.
     repositionCommittedBand(host, 9, 0, 23);
 
     const term = new HeadlessTerminal({
