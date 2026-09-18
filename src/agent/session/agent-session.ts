@@ -38,7 +38,6 @@ import { HookBlockedError } from '../../utils/errors.js';
 import {
   emitClosureEvent,
   sealTraceWriter,
-  type ClosureSignals,
 } from './closure-emitter.js';
 import { extractStructuredOutput } from '../output-extractor.js';
 import { z, type ZodType } from 'zod';
@@ -86,6 +85,7 @@ import {
 } from '../log-retention.js';
 import { sweepWitnessTree, WITNESS_SWEEP_START_DELAY_MS } from '../witness-sweep.js';
 import { sweepSessionSidecars, SESSION_SIDECAR_SWEEP_START_DELAY_MS } from '../session-sidecar-sweep.js';
+import { AccountingAccumulator } from './accounting-accumulator.js';
 
 
 export class AgentSession implements IAgentSession {
@@ -132,61 +132,12 @@ export class AgentSession implements IAgentSession {
   private sessionEndDispatched = false;
   private readonly ownsTraceSeal: boolean;
   private stateManager!: SessionStateManager;
-  /** Cumulative USD cost across all turns this session. Mirrored from
-   *  per-turn `metadata.totalCostUsd` so the trace writer's
-   *  `session_sealed` payload can report the final figure without
-   *  reaching into `TransformDeps`. */
-  private sessionRunningCostUsd = 0;
-  /** Cumulative token counters across all turns. Mirrored from each
-   *  turn's `metadata.usage` so the `closure` event can report the final
-   *  tuple. Per-counter optionality on the schema lets us emit a partial
-   *  tuple when a provider doesn't report cache breakdowns. */
-  private sessionRunningTokens: {
-    input: number;
-    output: number;
-    cacheRead: number;
-    cacheCreation: number;
-  } = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
-  /** Last `stopReason` the provider reported on a `turn.completed` event.
-   *  Threaded into the `closure` trace payload so a reader can see what
-   *  the model said about the end of the final turn (e.g. `end_turn`,
-   *  `tool_use_loop_capped`, `max_tokens`). Undefined when no turn
-   *  completed in this session. */
-  private lastStopReason: string | undefined;
   /**
-   * Terminal-cause flags set at their origin sites so `deriveClosureReason`
-   * reports the specific reason instead of a generic abort. Reset by `reset()`.
+   * Accounting accumulator: cost/token rollups, terminal-cause flags, and
+   * subagent completion counts extracted from the per-field inline state.
+   * See {@link AccountingAccumulator} for the full field inventory.
    */
-  private maxTurnsHit = false;
-  private hookBlocked = false;
-  /**
-   * True when the provider emitted a terminal `error` event (an HTTP / auth /
-   * stream failure) as the session's last turn outcome. Set at the two
-   * error-observation sites — `pullInitialization` (init-phase error) and
-   * `sendMessageStreamInternal` (per-turn error) — and cleared by a subsequent
-   * completed turn so it reflects the FINAL turn's result, not any error
-   * earlier in the session. Read by `deriveClosureReason` (→ `abort`) and
-   * `deriveSealStatus` (→ `failed`) so a provider failure on an otherwise-clean
-   * `close()` is not sealed as a silent `succeeded` / `model_end_turn`. Reset
-   * by `reset()`.
-   */
-  private sawProviderError = false;
-  /**
-   * Wall-clock timestamp captured at construction — used to compute the
-   * `session_init_done` phase duration and the `session_init_start` emit.
-   */
-  private readonly sessionStartedAt: number = Date.now();
-  /** Number of subagent forks that reached `succeeded` status. */
-  private subagentCompletedCount = 0;
-  /** Cumulative token counters rolled up from completed subagents. */
-  private subagentRunningTokens: {
-    input: number;
-    output: number;
-    cacheRead: number;
-    cacheCreation: number;
-  } = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
-  /** Cumulative USD cost rolled up from completed subagents. */
-  private subagentRunningCostUsd = 0;
+  private readonly accounting = new AccountingAccumulator();
   /**
    * Durable per-session event ledger (`~/.afk/state/sessions/<id>/events.jsonl`).
    * Created lazily on the first turn once the provider has issued a session id.
@@ -362,17 +313,9 @@ export class AgentSession implements IAgentSession {
     this.conversationHistory = [];
     this.turnCount = 0;
     this.lastResponseMetadata = null;
-    this.sessionRunningCostUsd = 0;
-    this.sessionRunningTokens = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
-    this.lastStopReason = undefined;
-    this.maxTurnsHit = false;
-    this.hookBlocked = false;
-    this.sawProviderError = false;
+    this.accounting.reset();
     this.sessionEndDispatched = false;
     this.currentState = 'idle';
-    this.subagentCompletedCount = 0;
-    this.subagentRunningTokens = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
-    this.subagentRunningCostUsd = 0;
     this.pendingFrameworkContext = [];
 
     const iterable = this.providerQuery as AsyncIterable<ProviderEvent>;
@@ -439,7 +382,7 @@ export class AgentSession implements IAgentSession {
           // user message's response. Awaiting ensures we exit cleanly first.
           await emitSessionPhase(this.config.traceWriter, {
             phase: 'session_init_done',
-            durationMs: Date.now() - this.sessionStartedAt,
+            durationMs: Date.now() - this.accounting.sessionStartedAt,
           });
           return;
         }
@@ -447,7 +390,7 @@ export class AgentSession implements IAgentSession {
           // Terminal-cause flag: an init-phase provider error must not seal as
           // a clean close. The eventual close()/reset() reads this so the trace
           // reports `abort`/`failed` rather than a silent `model_end_turn`.
-          this.sawProviderError = true;
+          this.accounting.markProviderError();
           return;
         }
       }
@@ -456,7 +399,7 @@ export class AgentSession implements IAgentSession {
       // Origin signal for `hook_blocked`: a SessionStart hook that blocks
       // throws HookBlockedError up through pullInitialization() to here.
       if (error instanceof HookBlockedError) {
-        this.hookBlocked = true;
+        this.accounting.markHookBlocked();
       }
       if (!this.stateManager.isInitializationSettled()) {
         this.stateManager.rejectInitializationOnce(error);
@@ -479,37 +422,11 @@ export class AgentSession implements IAgentSession {
       resolveInitialization: () => this.stateManager.resolveInitializationOnce(),
       setLastResponseMetadata: (m) => {
         this.lastResponseMetadata = m;
-        // Mirror per-turn cost into the session-wide accumulator so the
-        // trace writer's `session_sealed` payload reports cumulative
-        // spend, not just the last turn. Guarded against provider quirks
-        // where `totalCostUsd` is missing or non-numeric.
-        if (typeof m.totalCostUsd === 'number' && Number.isFinite(m.totalCostUsd)) {
-          this.sessionRunningCostUsd += m.totalCostUsd;
-        }
-        // Mirror per-turn tokens into the session-wide accumulator so the
-        // `closure` event reports the cumulative tuple at termination.
-        // `usage` is a Record<string, unknown> on ResponseMetadata so each
-        // key must be type-narrowed before adding.
-        const usage = m.usage;
-        if (usage && typeof usage === 'object') {
-          const u = usage as Record<string, unknown>;
-          const addCounter = (key: string, target: keyof typeof this.sessionRunningTokens): void => {
-            const v = u[key];
-            if (typeof v === 'number' && Number.isFinite(v)) {
-              this.sessionRunningTokens[target] += v;
-            }
-          };
-          addCounter('input_tokens', 'input');
-          addCounter('output_tokens', 'output');
-          addCounter('cache_read_input_tokens', 'cacheRead');
-          addCounter('cache_creation_input_tokens', 'cacheCreation');
-        }
-        // Track the last stopReason so the closure event can carry the
-        // model's own end-of-turn signal alongside the witness layer's
-        // termination classification.
-        if (typeof m.stopReason === 'string') {
-          this.lastStopReason = m.stopReason;
-        }
+        // Mirror per-turn cost/token/stopReason into the session-wide
+        // accumulator so the trace writer's `session_sealed` payload
+        // reports cumulative spend. Delegation to the accumulator keeps
+        // the logic in one place — see AccountingAccumulator.recordTurnMetadata.
+        this.accounting.recordTurnMetadata(m);
       },
       // Budget enforcement (C6): wire maxBudgetUsd from config so the stream
       // consumer can abort when cumulative cost crosses the ceiling.
@@ -769,12 +686,12 @@ export class AgentSession implements IAgentSession {
             // A completed turn clears a prior turn's provider error so the seal
             // status reflects the FINAL turn's outcome (e.g. a turn that errored
             // and was then retried successfully is not sealed as `failed`).
-            this.sawProviderError = false;
+            this.accounting.clearProviderError();
           } else if (output.type === 'error') {
             // Terminal-cause flag: a per-turn provider error (HTTP / auth /
             // stream failure) must flip the eventual clean close from a silent
             // `succeeded` / `model_end_turn` to `failed` / `abort`.
-            this.sawProviderError = true;
+            this.accounting.markProviderError();
           }
           this.ledger.recordEvent(output);
           this.outputBroadcast.push(output);
@@ -1376,12 +1293,13 @@ export class AgentSession implements IAgentSession {
     //   3. Dispatch the SessionEnd hook.
     // Both 1 and 2 swallow writer errors so a broken sink never masks the
     // real session-end reason from observers downstream.
-    const signals = this.closureSignals(reason);
+    const signals = this.accounting.closureSignals(this.abortController.signal, reason);
+    const acct = this.accounting.snapshot();
     await emitClosureEvent(this.config.traceWriter, {
       ...signals,
       finalTurnCount: this.turnCount,
-      finalCostUsd: this.sessionRunningCostUsd,
-      runningTokens: this.sessionRunningTokens,
+      finalCostUsd: acct.sessionRunningCostUsd,
+      runningTokens: acct.sessionRunningTokens,
     }).catch(() => {});
     // Invariant: only a session explicitly given the separate owner capability
     // (the second constructor arg) may seal the shared TraceWriter. Fork configs
@@ -1395,10 +1313,10 @@ export class AgentSession implements IAgentSession {
       await sealTraceWriter(this.ownedTraceWriter, {
         ...signals,
         finalTurnCount: this.turnCount,
-        finalCostUsd: this.sessionRunningCostUsd,
-        subagentCompletedCount: this.subagentCompletedCount,
-        subagentRunningTokens: this.subagentRunningTokens,
-        subagentRunningCostUsd: this.subagentRunningCostUsd,
+        finalCostUsd: acct.sessionRunningCostUsd,
+        subagentCompletedCount: acct.subagentCompletedCount,
+        subagentRunningTokens: acct.subagentRunningTokens,
+        subagentRunningCostUsd: acct.subagentRunningCostUsd,
       }).catch(() => {});
     }
     await dispatchSessionEnd(
@@ -1424,22 +1342,6 @@ export class AgentSession implements IAgentSession {
   }
 
   /**
-   * Snapshot the terminal-cause signals the closure emitters read. `reason` is
-   * the `dispatchSessionEndOnce` string (close/reset/error) and doubles as the
-   * seal reason. The derivation rules live in `./closure-emitter.ts`.
-   */
-  private closureSignals(reason: string): ClosureSignals {
-    return {
-      dispatchReason: reason,
-      signal: this.abortController.signal,
-      maxTurnsHit: this.maxTurnsHit,
-      hookBlocked: this.hookBlocked,
-      lastStopReason: this.lastStopReason,
-      sawProviderError: this.sawProviderError,
-    };
-  }
-
-  /**
    * Accumulate token and cost data from a completed subagent into the
    * session-level rollup that is included in `session_sealed`.
    *
@@ -1460,23 +1362,7 @@ export class AgentSession implements IAgentSession {
     },
     costUsd?: number,
   ): void {
-    this.subagentCompletedCount++;
-
-    if (usage) {
-      const add = (v: number | undefined, key: keyof typeof this.subagentRunningTokens): void => {
-        if (typeof v === 'number' && Number.isFinite(v) && v > 0) {
-          this.subagentRunningTokens[key] += v;
-        }
-      };
-      add(usage.inputTokens, 'input');
-      add(usage.outputTokens, 'output');
-      add(usage.cacheReadTokens, 'cacheRead');
-      add(usage.cacheCreationTokens, 'cacheCreation');
-    }
-
-    if (typeof costUsd === 'number' && Number.isFinite(costUsd) && costUsd > 0) {
-      this.subagentRunningCostUsd += costUsd;
-    }
+    this.accounting.recordSubagentCompletion(usage, costUsd);
   }
 
   /**
@@ -1503,7 +1389,7 @@ export class AgentSession implements IAgentSession {
     if (this.config.maxTurns && this.turnCount >= this.config.maxTurns) {
       // Origin signal for `max_turns_exceeded`: the throw below surfaces as a
       // generic dispatch error, so flag the specific cause for the closure.
-      this.maxTurnsHit = true;
+      this.accounting.markMaxTurnsHit();
       throw new Error(`Maximum turns (${this.config.maxTurns}) exceeded`);
     }
   }
