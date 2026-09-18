@@ -415,6 +415,28 @@ export class StatusLine {
       this.stream.write('\x1b[s');
       this.writeScrollRegion(rows);
       this.stream.write('\x1b[u');
+      // Invariant (ghost status-line erase): the full-screen scroll above
+      // pushed the entire viewport up by N rows, dragging the status line
+      // (painted at `rows`) and any footer bars into the reserved footer
+      // band (rows `rows - reserved` through `rows - 1`). flush() below
+      // repaints the status line at `rows`, and afterScrollRestore repaints
+      // the footer bars at their correct positions — but neither erases the
+      // scrolled-up COPIES that now sit in the reserved band. Those ghost
+      // copies are below the compositor's frame bottom (`absoluteBottom =
+      // rows - 1 - extraRows`) and above the status line (`rows`), so
+      // neither the frame's erase pass nor the status repaint touches them.
+      // Erase the entire reserved band before the repaints so no ghost
+      // survives. The save/restore above preserves the cursor across this.
+      const reserved = 1 + this.extraRows;
+      if (reserved > 1) {
+        let erase = '';
+        for (let r = rows - reserved + 1; r < rows; r++) {
+          erase += `\x1b[${r};1H\x1b[2K`;
+        }
+        if (erase.length > 0) {
+          this.stream.write('\x1b[s' + erase + '\x1b[u');
+        }
+      }
       this.flush();
       // Re-assert the footer bars (loop-stage rail, background-task bar) that
       // the full-screen scroll dragged upward. Without this their scrolled-up
