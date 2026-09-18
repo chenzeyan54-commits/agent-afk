@@ -26,7 +26,7 @@ import type {
   ProviderRewindConversationResult,
   RewindTarget,
 } from '../provider.js';
-import { RESET_DRAIN_TIMEOUT_MS, withTimeout, DEFAULT_SESSION_TIMEOUT_MS } from '../timeout.js';
+import { RESET_DRAIN_TIMEOUT_MS } from '../timeout.js';
 import type {
   AccountInfo,
   AgentConfig,
@@ -48,8 +48,7 @@ import type {
   SessionState,
   StructuredMessageOptions,
 } from '../types.js';
-import { z, type ZodType } from 'zod';
-import { extractStructuredOutput } from '../output-extractor.js';
+import type { ZodType } from 'zod';
 import { QueryInputStream } from './input-iterable.js';
 import { LedgerLifecycle } from './ledger-lifecycle.js';
 import { PlanExitBridge } from './plan-exit-bridge.js';
@@ -74,8 +73,7 @@ import { TurnStreamRunner } from './turn-stream-runner.js';
 import { SessionShutdown } from './session-shutdown.js';
 import { resetSession } from './session-reset.js';
 import * as pt from './provider-passthrough.js';
-import { setSlotBindings } from './model-slots.js';
-import { applySlotCredentials } from './slot-credentials.js';
+import * as ss from './session-send.js';
 
 
 export class AgentSession implements IAgentSession {
@@ -241,9 +239,6 @@ export class AgentSession implements IAgentSession {
    * SessionStart/SessionEnd hooks fire on each cycle.
    */
   private initSdkLifecycle(): void {
-    if (this.config.models) setSlotBindings(this.config.models);
-    applySlotCredentials(this.config);
-
     const { stateManager, inputStream, providerQuery, providerIterator } =
       buildProviderLifecycle(this.config);
 
@@ -339,77 +334,23 @@ export class AgentSession implements IAgentSession {
   }
 
   async sendMessage(content: string, options: SendMessageOptions = {}): Promise<Message> {
-    this.runner.assertCanSend();
-    const config = this.config;
-    const timeoutMs = config.timeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS;
-    const deps = this.makeSendDeps();
-    const collectResponse = async (): Promise<Message> => {
-      let result: Message | null = null;
-      let streamedContent = '';
-      deps.setState(options.stream ? 'streaming' : 'processing');
-      for await (const event of this.sendMessageStreamInternal(content)) {
-        if (event.type === 'chunk' && event.chunk.type === 'content') streamedContent += event.chunk.content;
-        if (event.type === 'message' && event.message.role === 'assistant') result = event.message;
-        if (event.type === 'error') throw event.error;
-        if (event.type === 'done') {
-          if (result) return { ...result, metadata: event.metadata };
-          if (streamedContent) return { role: 'assistant', content: streamedContent, metadata: event.metadata, timestamp: new Date() };
-        }
-      }
-      if (result) return result;
-      if (streamedContent) return { role: 'assistant', content: streamedContent, timestamp: new Date() };
-      throw new Error('No assistant response received');
-    };
-    try {
-      return await withTimeout(collectResponse(), timeoutMs, { controller: this.abortController, label: this.sessionId ?? 'session' });
-    } finally {
-      if (this.currentState === 'processing') this.currentState = 'idle';
-    }
+    return ss.sendMessage(content, options, this.makeSendDeps());
   }
 
   async sendMessageStructured<T>(content: string, schema: ZodType<T>, options: StructuredMessageOptions = {}): Promise<T> {
-    const { maxRetries = 2, injectSchemaPrompt = true, ...sendOpts } = options;
-    const schemaBlock = injectSchemaPrompt
-      ? '\n\nRespond with ONLY a JSON object (optionally in a ```json fence) that conforms to this JSON Schema:\n```json\n' +
-        JSON.stringify(z.toJSONSchema(schema, { target: 'openapi-3.0' })) + '\n```'
-      : '';
-    let lastError = '';
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      const prompt = attempt === 0
-        ? content + schemaBlock
-        : `Your previous response did not match the required JSON schema.\nValidation error: ${lastError}\nRespond again with ONLY a JSON object (optionally in a \`\`\`json fence) that satisfies the schema.` + schemaBlock;
-      const message = await this.sendMessage(prompt, sendOpts);
-      const candidate = extractStructuredOutput(message.content);
-      const parsed = schema.safeParse(candidate);
-      if (parsed.success) return parsed.data;
-      lastError = parsed.error.message;
-    }
-    throw new Error(`structured output did not match schema after ${maxRetries + 1} attempt(s): ${lastError}`);
+    return ss.sendMessageStructured(content, schema, options, this.makeSendDeps());
   }
 
   async *sendMessageStream(content: string | ContentBlockParam[]): AsyncIterableIterator<OutputEvent> {
-    this.runner.assertCanSend();
-    this.currentState = 'streaming';
-    try {
-      yield* this.sendMessageStreamInternal(content);
-    } finally {
-      if (this.currentState === 'streaming') this.currentState = 'idle';
-    }
-  }
-
-  private sendMessageStreamInternal(content: string | ContentBlockParam[]): AsyncIterableIterator<OutputEvent> {
-    this.planExit.clearModeBeforeDefault();
-    return this.runner.runStream(content, this.inputStream);
+    yield* ss.sendMessageStream(content, this.makeSendDeps());
   }
 
   async interrupt(): Promise<void> {
-    if (this.currentState !== 'streaming' && this.currentState !== 'processing') return;
-    this.currentState = 'idle';
-    await this.providerQuery.interrupt();
+    await ss.interrupt(this.makeSendDeps());
   }
 
   setBeforeNextRound(cb: (() => string | undefined) | undefined): void {
-    this.providerQuery.setBeforeNextRound?.(cb);
+    ss.setBeforeNextRound(cb, this.makeSendDeps());
   }
 
   /**
