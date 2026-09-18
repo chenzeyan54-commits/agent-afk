@@ -266,6 +266,7 @@ export class StatusLine {
     }
     this.writeScrollRegion(rows);
     this.stream.write('\x1b[u');
+    this.eraseReservedBand(rows);
     this.flush();
   }
 
@@ -310,6 +311,7 @@ export class StatusLine {
       this.stream.write('\x1b[s');
       this.writeScrollRegion(rows);
       this.stream.write('\x1b[u');
+      this.eraseReservedBand(rows);
       this.flush();
     }
   }
@@ -356,6 +358,7 @@ export class StatusLine {
     this.stream.write('\x1b[s');
     this.writeScrollRegion(rows);
     this.stream.write('\x1b[u');
+    this.eraseReservedBand(rows);
     this.flush();
   }
 
@@ -415,28 +418,7 @@ export class StatusLine {
       this.stream.write('\x1b[s');
       this.writeScrollRegion(rows);
       this.stream.write('\x1b[u');
-      // Invariant (ghost status-line erase): the full-screen scroll above
-      // pushed the entire viewport up by N rows, dragging the status line
-      // (painted at `rows`) and any footer bars into the reserved footer
-      // band (rows `rows - reserved` through `rows - 1`). flush() below
-      // repaints the status line at `rows`, and afterScrollRestore repaints
-      // the footer bars at their correct positions — but neither erases the
-      // scrolled-up COPIES that now sit in the reserved band. Those ghost
-      // copies are below the compositor's frame bottom (`absoluteBottom =
-      // rows - 1 - extraRows`) and above the status line (`rows`), so
-      // neither the frame's erase pass nor the status repaint touches them.
-      // Erase the entire reserved band before the repaints so no ghost
-      // survives. The save/restore above preserves the cursor across this.
-      const reserved = 1 + this.extraRows;
-      if (reserved > 1) {
-        let erase = '';
-        for (let r = rows - reserved + 1; r < rows; r++) {
-          erase += `\x1b[${r};1H\x1b[2K`;
-        }
-        if (erase.length > 0) {
-          this.stream.write('\x1b[s' + erase + '\x1b[u');
-        }
-      }
+      this.eraseReservedBand(rows);
       this.flush();
       // Re-assert the footer bars (loop-stage rail, background-task bar) that
       // the full-screen scroll dragged upward. Without this their scrolled-up
@@ -749,6 +731,37 @@ export class StatusLine {
       return;
     }
     this.stream.write('\x1b[r');
+  }
+
+  // Invariant (reserved-band erase): clear every row between the scroll
+  // region bottom and the status line's paint row. After any full-screen
+  // scroll, DECSTBM re-arm, or extraRows change, displaced copies of the
+  // status line and footer bars land in this band. flush() repaints the
+  // status line at `rows`, and afterScrollRestore redraws the footer bars
+  // at their current positions -- but neither erases the PREVIOUS contents
+  // of these rows. Those ghost copies sit below the compositor frame bottom
+  // and above the status row, invisible to both erase passes.
+  //
+  // Called from: withFullScrollRegion (scroll displaced ghosts), rearm
+  // (DECSTBM re-establishment may expose stale content), setExtraRows
+  // (band expansion captures rows that previously held scroll-region
+  // content). The subsequent flush() + afterScrollRestore then repaint
+  // clean content over the cleared rows.
+  private eraseReservedBand(rows: number): void {
+    const reserved = 1 + this.extraRows;
+    // Erase rows (rows - reserved + 1) through (rows - 1) -- everything
+    // between the scroll-region bottom and the status line's paint row.
+    // When reserved === 1 (no footer bars), the range is empty: the status
+    // line at `rows` is the only reserved row, and its own repaint covers
+    // any ghost at that position.
+    if (reserved <= 1) return;
+    let erase = '';
+    for (let r = rows - reserved + 1; r < rows; r++) {
+      erase += `\x1b[${r};1H\x1b[2K`;
+    }
+    if (erase.length > 0) {
+      this.stream.write('\x1b[s' + erase + '\x1b[u');
+    }
   }
 }
 
