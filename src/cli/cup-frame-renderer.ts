@@ -37,9 +37,9 @@
  *     above it — protecting a fixed banner that occupies rows 1..anchorFloor-1.
  */
 
-import wrapAnsi from 'wrap-ansi';
 import type { Writable } from 'node:stream';
 import { env } from '../config/env.js';
+import { hardWrapToWidth } from './wrap.js';
 
 // Synchronized output — supported by xterm/iTerm2/Apple Terminal. Wrapping a
 // frame write in these escapes prevents visible tearing when rendering multiple
@@ -90,7 +90,7 @@ export class CupFrameRenderer {
    */
   private static wrapToPhysicalLines(content: string, width: number): string[] {
     const raw = content.endsWith('\n') ? content : `${content}\n`;
-    const wrapped = wrapAnsi(raw, width, { trim: false, hard: true, wordWrap: false });
+    const wrapped = hardWrapToWidth(raw, width);
     const allLines = wrapped.split('\n');
     while (allLines.length > 0 && allLines[allLines.length - 1] === '') {
       allLines.pop();
