@@ -14,15 +14,12 @@ import {
   DEFAULT_MAX_CONCURRENT_SAFE_TOOL_CALLS,
   resolveMaxConcurrentSafeToolCalls,
 } from '../../config/concurrency.js';
-import { debugLog } from '../../utils/debug.js';
-
 import { abortFailureClass } from '../abort-reason.js';
 
-import type { HookRegistry, PostToolUseContext, PostToolUseFailureContext } from '../hooks.js';
+import type { HookRegistry } from '../hooks.js';
 import type { AnthropicToolDef } from '../providers/anthropic-direct/types.js';
 import type { ToolDispatcher } from '../providers/anthropic-direct/tool-dispatcher.js';
 import type { ToolCall, ToolResult } from '../providers/anthropic-direct/types.js';
-import { dispatchPostToolUse, dispatchPostToolUseFailure } from '../subagent-hooks.js';
 import type { SubagentExecutor } from './subagent-executor.js';
 import type { SkillExecutor } from './skill-executor.js';
 import type { ComposeExecutor } from './compose-executor.js';
@@ -31,7 +28,6 @@ import type { ToolActivityReporter } from '../providers/shared/tool-activity.js'
 import type { SpawnedPidRegistry } from './handlers/pid-registry.js';
 import type { ToolPermissionConfig } from './permissions.js';
 import type { CanUseTool } from '../types/sdk-types.js';
-import { headAndTail } from './handlers/_output-cap.js';
 import { PathGrantManager, type GrantSnapshot } from './grant-manager.js';
 import type { GrantManager } from '../../cli/slash/commands/allow-dir.js';
 
@@ -49,10 +45,14 @@ import type { IndexedCall, BatchExecDeps } from './dispatcher.batch-process.js';
 import {
   runPreDispatchGates as _runPreDispatchGates,
   resetDenialBreaker as _resetDenialBreaker,
-  emitPreToolUseBlock as _emitPreToolUseBlock,
 } from './dispatcher.pre-dispatch-gates.js';
 import type { PreDispatchGateMutableState, PreDispatchGateDeps } from './dispatcher.pre-dispatch-gates.js';
-import { executeSubagentProviderTool, isSubagentProviderTool } from './dispatcher.subagent-tools.js';
+import {
+  executeCore as _executeCore,
+  isRegisteredTool as _isRegisteredTool,
+  denialReason as _denialReason,
+} from './dispatcher.core-exec.js';
+import type { CoreExecDeps } from './dispatcher.core-exec.js';
 
 // Re-exported for backward compatibility: external importers (dispatcher.test.ts,
 // schema-classification.test.ts) historically import this from './dispatcher.js'.
@@ -609,31 +609,13 @@ export class SessionToolDispatcher implements ToolDispatcher {
    * union consumed by receipt/detector code, and widening it is out of scope
    * for a message fix.
    */
-  private denialReason(toolName: string, permissionReason: string | undefined): string {
-    if (this.isRegisteredTool(toolName)) {
-      return permissionReason ?? `Tool "${toolName}" is not permitted`;
-    }
-    return this.unknownToolMessage(toolName);
-  }
-
-  /** Whether this session has an implementation for a tool, regardless of permission. */
-  private isRegisteredTool(toolName: string): boolean {
-    return (
-      this.handlers.has(toolName) ||
-      (toolName === 'agent' && this.subagentExecutor !== undefined) ||
-      (toolName === 'cancel_background_job' && this.subagentExecutor?.supportsBackgroundJobs?.() === true) ||
-      (toolName === 'send_message_to_agent' && this.subagentExecutor?.supportsBackgroundJobs?.() === true) ||
-      (toolName === 'skill' && this.skillExecutor !== undefined) ||
-      (toolName === 'compose' && this.composeExecutor !== undefined)
-    );
-  }
-
   /**
    * Build the {@link PreDispatchGateDeps} bundle for the current call context.
    * Called inline in `execute()` and `executeBatch()` so both paths always
    * observe the current `resolveBase` and grant-manager reference.
    */
   private gateDeps(): PreDispatchGateDeps {
+    const cDeps = this.coreExecDeps();
     return {
       state: this.gateState,
       hookRegistry: this.hookRegistry,
@@ -647,36 +629,37 @@ export class SessionToolDispatcher implements ToolDispatcher {
       sessionGrantManager: this.sessionGrantManager,
       resolveBase: this.resolveBase,
       traceWriter: this.traceWriter,
-      isRegisteredTool: (name) => this.isRegisteredTool(name),
-      denialReason: (name, reason) => this.denialReason(name, reason),
+      isRegisteredTool: (name) => _isRegisteredTool(name, cDeps),
+      denialReason: (name, reason) => _denialReason(name, reason, cDeps),
     };
   }
 
   /**
-   * Contract: the single model-visible phrasing for "this tool does not exist",
-   * shared by the permission gate (a name absent from BOTH the allowlist and
-   * the handler map) and the handler lookup in `executeCoreInner` (a name that
-   * IS allowlisted but has no registered handler — reachable in production via
-   * `exit_plan_mode`, which `topLevelSurfaceAllowedTools` lists statically but
-   * which is only registered while in plan mode, and via an MCP tool whose
-   * server dropped after the allowlist snapshot).
+   * Build the {@link CoreExecDeps} bundle for the current call context.
+   * Called by {@link gateDeps} and directly by {@link executeCore} delegation.
    *
-   * Suggestions come from `toolDefs`, never `handlers`: the handler map can
-   * hold tools the gate will reject, and advertising one just buys a denial on
-   * the next turn. `toolDefs` is exactly what was shown to the model, so it is
-   * the only honest answer to "what may I call instead".
+   * History: isRegisteredTool, denialReason, unknownToolMessage, applyOutputCap,
+   * executeCompose, executeCoreInner, executeCore, firePostToolUse, and
+   * firePostToolUseFailure were extracted to dispatcher.core-exec.ts to bring
+   * dispatcher.ts below the 350-code-line ceiling. The class delegates via
+   * _executeCore imported from that module, threaded through coreExecDeps().
    */
-  private unknownToolMessage(toolName: string): string {
-    const available = this.toolDefs.map((s) => s.name).join(', ');
-    // An empty listing means no schema survived the allowlist filter — the
-    // model was shown nothing, so pointing at "the tools listed above" would be
-    // a dangling reference.
-    const guidance =
-      available.length > 0
-        ? `Available tools: ${available}. Do NOT retry "${toolName}" or a variant of it; ` +
-          `use one of the tools listed above.`
-        : `Do NOT retry "${toolName}" or a variant of it.`;
-    return `Unknown tool "${toolName}" — it does not exist in this session. ${guidance}`;
+  private coreExecDeps(): CoreExecDeps {
+    return {
+      handlers: this.handlers,
+      hookRegistry: this.hookRegistry,
+      sessionId: this.sessionId,
+      parentSessionId: this.parentSessionId,
+      sessionGrantManager: this.sessionGrantManager,
+      traceWriter: this.traceWriter,
+      maxOutputBytes: this.maxOutputBytes,
+      subagentExecutor: this.subagentExecutor,
+      skillExecutor: this.skillExecutor,
+      composeExecutor: this.composeExecutor,
+      callHandlerContext: (call) => this.callHandlerContext(call),
+      gateDeps: () => this.gateDeps(),
+      toolDefs: this.toolDefs,
+    };
   }
 
   // History: runPreDispatchGates, checkReadOnlyBash, emitPreToolUseBlock,
@@ -824,225 +807,15 @@ export class SessionToolDispatcher implements ToolDispatcher {
   }
 
   /**
-   * Core execution + central output-cap backstop. The single result path both
-   * `execute()` and `executeBatch()` call per tool, so applying the cap here
-   * (after {@link executeCoreInner} has run the handler AND fired PostToolUse)
-   * bounds EVERY tool result exactly once, regardless of which entry path
-   * dispatched it. See {@link SessionToolDispatcherOptions.maxOutputBytes}.
+   * Core execution + central output-cap backstop. Delegates to the extracted
+   * {@link executeCore} free function in `dispatcher.core-exec.ts`. The single
+   * result path both `execute()` and `executeBatch()` call per tool.
    *
-   * Ordering rationale: the cap is applied AFTER `executeCoreInner` returns —
-   * i.e. after PostToolUse has already observed the full, uncapped `content`
-   * (fired fire-and-forget inside the inner method). Hooks and the model see
-   * consistent truncation: the model-facing `content` is the capped view, and
-   * `truncated: true` is the structured signal for non-model consumers.
+   * Ordering: the cap is applied AFTER handler + PostToolUse fire. See the
+   * long comment in `dispatcher.core-exec.ts` on {@link executeCore}.
    */
   private async executeCore(call: ToolCall): Promise<ToolResult> {
-    const result = await this.executeCoreInner(call);
-    return this.applyOutputCap(result);
-  }
-
-  /**
-   * Reduce `result.content` to head+tail when a central `maxOutputBytes` cap is
-   * armed AND the content exceeds it; otherwise return the result untouched.
-   *
-   * - No-op when `this.maxOutputBytes` is undefined (top-level default) or the
-   *   content already fits — {@link headAndTail} itself returns short input
-   *   byte-for-byte, so this is idempotent and never double-truncates content a
-   *   handler (e.g. web_scrape) already capped.
-   * - NEVER touches `result.image`: the cap governs the text budget only; an
-   *   attached screenshot rides through unchanged.
-   * - Mutates and returns the same object (results are freshly constructed per
-   *   call, never shared), setting `truncated: true` — the same structured flag
-   *   bash/web_scrape set — so trace/hook consumers need not scan `content`.
-   */
-  private applyOutputCap(result: ToolResult): ToolResult {
-    const cap = this.maxOutputBytes;
-    if (cap === undefined) return result;
-    const originalBytes = Buffer.byteLength(result.content, 'utf8');
-    if (originalBytes <= cap) return result;
-    result.content = headAndTail(result.content, cap);
-    result.truncated = true;
-    // Observability (#661): fork-side truncation is otherwise invisible — the
-    // `truncated` flag is a structured signal for downstream consumers, but the
-    // ORIGINAL-vs-capped byte delta (how much a fork's tool actually
-    // overflowed) is dropped. Emit it via the file's existing lightweight
-    // logger (debugLog, gated on AFK_DEBUG/DEBUG). Deliberately NOT a witness
-    // trace event: no existing trace kind carries an original+capped byte pair,
-    // and adding one would expand the closed trace schema (types.ts + events.ts
-    // zod union + tests) for a non-blocking diagnostic — out of scope here. The
-    // per-call `tool_call.completed` trace event already records the final
-    // (capped) `resultBytes` + `truncated`; this line adds the original size
-    // the cap ate, which that event does not carry.
-    debugLog(
-      `[output-cap #661] fork tool result capped: original=${originalBytes}B ` +
-        `capped=${Buffer.byteLength(result.content, 'utf8')}B (cap=${cap}B)`,
-    );
-    return result;
-  }
-
-  /**
-   * Core execution: agent routing + handler dispatch + PostToolUse hook.
-   * Shared by both `execute()` (single-tool path) and `executeBatch()`
-   * (after pre-hooks and permissions are already handled). Wrapped by
-   * {@link executeCore}, which applies the central output-cap backstop to
-   * whatever result this returns.
-   */
-  private async executeCoreInner(call: ToolCall): Promise<ToolResult> {
-    // Agent dispatch and model cancellation share the provider-level executor.
-    if (isSubagentProviderTool(call.name)) {
-      const outcome = await executeSubagentProviderTool(this.subagentExecutor, call);
-      if (outcome.thrownMessage !== undefined) {
-        this.firePostToolUseFailure(call.name, outcome.thrownMessage, call.signal, call.input);
-      } else {
-        this.firePostToolUse(call.name, outcome.result.content, call.signal, call.input, outcome.result);
-      }
-      return outcome.result;
-    }
-
-    // Skill tool — provider-level dispatch
-    if (call.name === 'skill') {
-      if (!this.skillExecutor) {
-        return {
-          content: 'Skill tool is not available in this session configuration',
-          isError: true,
-        };
-      }
-      let result: ToolResult;
-      let skillThrew = false;
-      let skillErrMsg = '';
-      try {
-        result = await this.skillExecutor.execute(call);
-      } catch (err) {
-        skillThrew = true;
-        skillErrMsg = err instanceof Error ? err.message : String(err);
-        result = { content: `Skill tool error: ${skillErrMsg}`, isError: true };
-      }
-      if (skillThrew) {
-        this.firePostToolUseFailure(call.name, skillErrMsg, call.signal, call.input);
-      } else {
-        this.firePostToolUse(call.name, result.content, call.signal, call.input, result);
-      }
-      return result;
-    }
-
-    // Compose tool — DAG-based parallel subagent dispatch
-    if (call.name === 'compose') {
-      const result = await this.executeCompose(call);
-      this.firePostToolUse(call.name, result.content, call.signal, call.input, result);
-      return result;
-    }
-
-    // Handler lookup
-    const handler = this.handlers.get(call.name);
-    if (!handler) {
-      const msg = this.unknownToolMessage(call.name);
-      await _emitPreToolUseBlock(call.name, msg, this.gateDeps());
-      return { content: msg, isError: true, failureClass: 'permission-denied' };
-    }
-
-    let result: ToolResult;
-    let handlerThrew = false;
-    let handlerErrMsg = '';
-    try {
-      result = await handler(call.input, call.signal, this.callHandlerContext(call));
-    } catch (err) {
-      handlerThrew = true;
-      handlerErrMsg = err instanceof Error ? err.message : String(err);
-      result = { content: `Tool execution error: ${handlerErrMsg}`, isError: true };
-    }
-
-    // Invariant: exactly one of PostToolUse / PostToolUseFailure fires per call.
-    if (handlerThrew) {
-      this.firePostToolUseFailure(call.name, handlerErrMsg, call.signal, call.input);
-    } else {
-      this.firePostToolUse(call.name, result.content, call.signal, call.input, result);
-    }
-    return result;
-  }
-
-  private async executeCompose(call: ToolCall): Promise<ToolResult> {
-    if (!this.composeExecutor) {
-      return {
-        content: 'Compose tool is not available in this session configuration',
-        isError: true,
-      };
-    }
-    try {
-      return await this.composeExecutor.execute(call);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { content: `Compose tool error: ${message}`, isError: true };
-    }
-  }
-
-  /**
-   * Fire-and-forget PostToolUse dispatch. Used by `executeCore` and the
-   * compose path where the caller does not need to await the hook's
-   * completion. Routes through `dispatchPostToolUse` so the
-   * witness-layer `hook_decision` event lands automatically.
-   *
-   * `resultFlags` is an OPTIONAL trailing parameter (additive, back-compat):
-   * callers that omit it get byte-identical behavior to before this field
-   * existed — no new keys land on `postCtx`. Callers that have the full
-   * `ToolResult` in scope (the agent/skill/compose/handler success paths in
-   * `executeCoreInner`) pass it so a PostToolUse hook can read
-   * `incomplete`/`incompleteReason` — the structured counterpart to the
-   * `[⚠ PARTIAL RESULT…]` banner already in `output` — without substring-
-   * matching that banner text.
-   */
-  private firePostToolUse(
-    toolName: string,
-    output: string,
-    signal: AbortSignal,
-    input?: unknown,
-    resultFlags?: Pick<ToolResult, 'incomplete' | 'incompleteReason' | 'isError'>,
-  ): void {
-    if (!this.hookRegistry) return;
-    const postCtx: PostToolUseContext = {
-      event: 'PostToolUse',
-      toolName,
-      output,
-      ...(input !== undefined ? { input } : {}),
-      ...(this.sessionId !== undefined ? { sessionId: this.sessionId } : {}),
-      ...(this.parentSessionId !== undefined ? { parentSessionId: this.parentSessionId } : {}),
-      // Mirror PreToolUse so path-approval "Once"-grant revoke uses the same grant manager.
-      ...(this.sessionGrantManager ? { grantManager: this.sessionGrantManager } : {}),
-      ...(resultFlags?.isError === true ? { isError: true } : {}),
-      ...(resultFlags?.incomplete === true ? { incomplete: true, ...(resultFlags.incompleteReason ? { incompleteReason: resultFlags.incompleteReason } : {}) } : {}),
-    };
-    void dispatchPostToolUse(this.hookRegistry, postCtx, {
-      signal,
-      ...(this.traceWriter ? { traceWriter: this.traceWriter } : {}),
-    }).catch(() => {});
-  }
-
-  /**
-   * Fire-and-forget PostToolUseFailure dispatch. Mirrors firePostToolUse.
-   * Called only from the catch paths where a tool handler threw — never from
-   * the success path. Errors inside the hook are swallowed so a broken
-   * failure-observer cannot propagate back to the tool dispatcher.
-   */
-  private firePostToolUseFailure(
-    toolName: string,
-    errorMessage: string,
-    signal: AbortSignal,
-    input?: unknown,
-  ): void {
-    if (!this.hookRegistry) return;
-    const ctx: PostToolUseFailureContext = {
-      event: 'PostToolUseFailure',
-      toolName,
-      error: errorMessage,
-      ...(input !== undefined ? { input } : {}),
-      ...(this.sessionId !== undefined ? { sessionId: this.sessionId } : {}),
-      ...(this.parentSessionId !== undefined ? { parentSessionId: this.parentSessionId } : {}),
-    };
-    void dispatchPostToolUseFailure(this.hookRegistry, ctx, {
-      signal,
-      ...(this.traceWriter ? { traceWriter: this.traceWriter } : {}),
-    }).catch((err: unknown) => {
-      debugLog(`firePostToolUseFailure outer catch (tool=${toolName}): ${String(err)}`);
-    });
+    return _executeCore(call, this.coreExecDeps());
   }
 
 }

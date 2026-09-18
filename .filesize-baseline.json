@@ -10,7 +10,6 @@
     "src/agent/session/agent-session.ts": { "loc": 777, "reason": "legacy: predates the ceiling gate; pending concern extraction" },
     "src/agent/subagent.ts": { "loc": 377, "reason": "legacy: predates the ceiling gate; pending concern extraction" },
     "src/agent/tools/compose-executor.ts": { "loc": 561, "reason": "legacy: predates the ceiling gate; pending concern extraction" },
-    "src/agent/tools/dispatcher.ts": { "loc": 477, "reason": "legacy: predates the ceiling gate; pending concern extraction" },
     "src/agent/tools/hooks/path-approval-hook.ts": { "loc": 386, "reason": "legacy: predates the ceiling gate; pending concern extraction" },
     "src/agent/tools/readonly-bash.ts": { "loc": 415, "reason": "legacy: predates the ceiling gate; pending concern extraction" },
     "src/agent/tools/schemas.ts": { "loc": 1402, "reason": "legacy: predates the ceiling gate; pending concern extraction" },
