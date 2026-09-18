@@ -200,9 +200,19 @@ export class CupFrameRenderer {
 
     // Erase the previous frame's rows. Covers cases where the new frame is
     // shorter than the previous (rows that would otherwise be stale on screen).
+    //
+    // Invariant (reserved-band safety): skip rows beyond bottomRow — those
+    // belong to the reserved footer band (StatusLine + LoopStageBar +
+    // HealthRail + VerdictLedger). At boot the compositor renders its first
+    // idle frame BEFORE footer subsystems claim their extraRows, so
+    // previousTopRow can land inside the band once it is established. Without
+    // this clamp the next repaint's erase pass CUP-erases footer-owned rows,
+    // producing the "ghost status-line" artifact (the footer painter redraws
+    // on its own tick, but the erased row is visible in the gap).
     if (this.previousLineCount > 0) {
       for (let i = 0; i < this.previousLineCount; i++) {
         const row = this.previousTopRow + i;
+        if (row > bottomRow) break;
         out += cup(row, 1) + ERASE_LINE;
       }
     }
