@@ -12,11 +12,6 @@ import { describe, it, expect } from 'vitest';
 import { formatStatusLine } from './status-line-format.js';
 import { displayWidth } from '../display.js';
 
-/** Strip ANSI escape sequences for plain-text assertions. */
-function strip(s: string): string {
-  return s.replace(/\x1b\[[0-9;]*[mGKHs]/g, '').replace(/\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g, '');
-}
-
 // Use the broad ANSI regex from the existing test suite for completeness.
 const ANSI_RE = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
 function stripAll(s: string): string {
@@ -227,10 +222,11 @@ describe('formatStatusLine — priority-based shedding at narrow widths', () => 
       { model: 'sonnet', cost: 0.05, contextPct: 0.5, contextLimit: 200000, contextUsedTokens: 100000 },
       35,
     ));
-    // At 35 cols, tokens (priority 4) and cost (priority 3) both shed before context bar (priority 2).
+    // Cost (priority 3) shed before context bar (priority 2).
     expect(out).not.toContain('$0.05');
-    // Context bar (priority 2) or branch (priority 1) may survive depending on exact widths;
-    // the key invariant is that cost shed before the bar.
+    // Context bar survived — positive assertion that priority ordering was respected.
+    expect(out).toContain('[');
+    expect(out).toContain('50%');
   });
 
   it('drops branch last among droppables (priority 1) — survives when tokens/cost shed', () => {
@@ -280,6 +276,21 @@ describe('formatStatusLine — priority-based shedding at narrow widths', () => 
     expect(out).not.toContain('tok');
   });
 
+  it('never drops cwd — survives at a width where branch, cost, and tokens are shed', () => {
+    // cwd has no droppablePriority (never-drop). At width 24 with branch (priority 1),
+    // cost (priority 3), and tokens (priority 4) all present, all droppables shed first
+    // but the cwd (never-drop) must remain visible alongside the model.
+    const out = stripAll(formatStatusLine(
+      { model: 'sonnet', cwd: '/tmp/proj', branch: 'feat/x', cost: 0.05, tokens: 1200 },
+      24,
+    ));
+    expect(out).toContain('sonnet');
+    expect(out).toContain('proj');      // cwd survived (never-drop)
+    expect(out).not.toContain('feat/x'); // branch dropped (droppablePriority 1)
+    expect(out).not.toContain('$0.05'); // cost dropped (droppablePriority 3)
+    expect(out).not.toContain('tok');   // tokens dropped (droppablePriority 4)
+  });
+
   it('right-truncates the result at maxW after shedding all droppables', () => {
     // A model name longer than maxW — after all droppables gone, truncation fires.
     const longModel = 'a'.repeat(40);
@@ -295,6 +306,8 @@ describe('formatStatusLine — priority-based shedding at narrow widths', () => 
     ));
     expect(out).toContain('sonnet');
     expect(out).not.toContain('turn 7');
+    // Cost survived — positive assertion that the kept element is actually present.
+    expect(out).toContain('$0.01');
   });
 
   it('sheds budget indicator (priority 7) before turnCount (priority 6)', () => {
