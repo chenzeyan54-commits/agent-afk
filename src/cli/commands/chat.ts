@@ -518,12 +518,12 @@ export function registerChatCommand(program: Command): void {
               metadata: { serverCount: enabledCount },
             });
             try {
-              mcpManager = await McpManager.fromConfig(loaded.mcpServers, {
+              ({ manager: mcpManager } = await McpManager.fromConfig(loaded.mcpServers, {
                 warnings: loaded.warnings,
                 serverLayers: loaded.serverLayers,
                 userAllowSecretEnv: loaded.userAllowSecretEnv,
                 ...(trace?.writer !== undefined ? { traceWriter: trace.writer } : {}),
-              });
+              }));
             } finally {
               void emitSessionPhase(trace?.writer, {
                 phase: 'mcp_connect_done',

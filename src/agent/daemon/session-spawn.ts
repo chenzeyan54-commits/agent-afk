@@ -96,12 +96,12 @@ export async function spawnDaemonSession(taskId: string, options: DaemonSpawnOpt
         metadata: { serverCount: enabledMcpCount },
       });
       try {
-        mcpManager = await McpManager.fromConfig(loadedMcp.mcpServers, {
+        ({ manager: mcpManager } = await McpManager.fromConfig(loadedMcp.mcpServers, {
           warnings: loadedMcp.warnings,
           serverLayers: loadedMcp.serverLayers,
           userAllowSecretEnv: loadedMcp.userAllowSecretEnv,
           ...(trace?.writer !== undefined ? { traceWriter: trace.writer } : {}),
-        });
+        }));
       } finally {
         void emitSessionPhase(trace?.writer, {
           phase: 'mcp_connect_done',

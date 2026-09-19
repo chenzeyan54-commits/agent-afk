@@ -40,13 +40,13 @@ describe('McpManager (integration: stdio fixture)', () => {
   it(
     'connects, lists tools, and routes calls through the bridged handler',
     async () => {
-      manager = await McpManager.fromConfig({
+      ({ manager } = await McpManager.fromConfig({
         testsrv: {
           type: 'stdio',
           command: process.execPath, // node
           args: [FIXTURE],
         },
-      });
+      }));
 
       const states = manager.getServerStates();
       expect(states.length).toBe(1);
@@ -81,13 +81,13 @@ describe('McpManager (integration: stdio fixture)', () => {
   it(
     'returns isError=true when the server reports a tool failure',
     async () => {
-      manager = await McpManager.fromConfig({
+      ({ manager } = await McpManager.fromConfig({
         testsrv: {
           type: 'stdio',
           command: process.execPath,
           args: [FIXTURE],
         },
-      });
+      }));
 
       const boomHandler = manager.getMcpHandlers().get('mcp__testsrv__boom')!;
       const ac = new AbortController();
@@ -101,13 +101,13 @@ describe('McpManager (integration: stdio fixture)', () => {
   it(
     'passes structured args through to the server',
     async () => {
-      manager = await McpManager.fromConfig({
+      ({ manager } = await McpManager.fromConfig({
         testsrv: {
           type: 'stdio',
           command: process.execPath,
           args: [FIXTURE],
         },
-      });
+      }));
 
       const addHandler = manager.getMcpHandlers().get('mcp__testsrv__add')!;
       const ac = new AbortController();
@@ -121,7 +121,8 @@ describe('McpManager (integration: stdio fixture)', () => {
   it(
     'marks a server as `error` when it fails to spawn and continues with the rest',
     async () => {
-      manager = await McpManager.fromConfig({
+      let failedServers: import('./manager.js').FailedServerInfo[];
+      ({ manager, failedServers } = await McpManager.fromConfig({
         good: {
           type: 'stdio',
           command: process.execPath,
@@ -132,7 +133,12 @@ describe('McpManager (integration: stdio fixture)', () => {
           // Use a path that's guaranteed to not exist so spawn rejects.
           command: '/this/path/does/not/exist-mcp',
         },
-      });
+      }));
+
+      // Structural failure info is returned directly — no getServerStates() filter needed.
+      expect(failedServers).toHaveLength(1);
+      expect(failedServers[0]!.name).toBe('bad');
+      expect(failedServers[0]!.error).toBeTruthy();
 
       const states = manager.getServerStates();
       const byName = new Map(states.map((s) => [s.serverName, s]));
@@ -155,13 +161,13 @@ describe('McpManager (integration: stdio fixture)', () => {
     async () => {
       let caught: unknown;
       try {
-        manager = await McpManager.fromConfig({
+        ({ manager } = await McpManager.fromConfig({
           required: {
             type: 'stdio',
             command: '/this/path/does/not/exist-mcp',
             alwaysLoad: true,
           },
-        });
+        }));
       } catch (err) {
         caught = err;
       }
@@ -181,7 +187,7 @@ describe('McpManager (integration: stdio fixture)', () => {
       const disconnectSpy = vi.spyOn(McpClient.prototype, 'disconnect');
       let caught: unknown;
       try {
-        manager = await McpManager.fromConfig({
+        ({ manager } = await McpManager.fromConfig({
           good: {
             type: 'stdio',
             command: process.execPath,
@@ -192,7 +198,7 @@ describe('McpManager (integration: stdio fixture)', () => {
             command: '/this/path/does/not/exist-mcp',
             alwaysLoad: true,
           },
-        });
+        }));
       } catch (err) {
         caught = err;
       }
@@ -214,13 +220,13 @@ describe('McpManager (integration: stdio fixture)', () => {
   it(
     'skips disabled servers without spawning them',
     async () => {
-      manager = await McpManager.fromConfig({
+      ({ manager } = await McpManager.fromConfig({
         off: {
           type: 'stdio',
           command: '/this/should/never/be/invoked',
           disabled: true,
         },
-      });
+      }));
       const states = manager.getServerStates();
       expect(states.length).toBe(1);
       expect(states[0]!.status).toBe('disabled');
@@ -244,7 +250,7 @@ describe('McpManager (integration: stdio fixture)', () => {
     // swallowed before it ever reaches disconnectAll()'s catch.
     'disconnectAll swallows a per-server disconnect rejection, warns, and still tears down the other servers (#247)',
     async () => {
-      manager = await McpManager.fromConfig({
+      ({ manager } = await McpManager.fromConfig({
         // Two independently-connected fixture servers. Map insertion order is
         // preserved, so disconnectAll() iterates good→bad — but the assertions
         // below are order-independent (they key on serverName).
@@ -258,7 +264,7 @@ describe('McpManager (integration: stdio fixture)', () => {
           command: process.execPath,
           args: [FIXTURE],
         },
-      });
+      }));
 
       // Both connected before we touch teardown.
       const states = manager.getServerStates();

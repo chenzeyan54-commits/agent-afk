@@ -87,11 +87,20 @@ export async function connectReplMcp(a: {
       // clear erases them. They ride bootWarnings instead and are drained
       // after the clear. `chat` still forwards them — it never clears — so
       // this does not change any other surface, and nothing double-prints.
-      mcpManager = await McpManager.fromConfig(loaded.mcpServers, {
+      const result = await McpManager.fromConfig(loaded.mcpServers, {
         serverLayers: loaded.serverLayers,
         userAllowSecretEnv: loaded.userAllowSecretEnv,
         ...(a.traceWriter !== undefined ? { traceWriter: a.traceWriter } : {}),
       });
+      mcpManager = result.manager;
+      for (const failed of result.failedServers) {
+        await recordBootWarning({
+          bootWarnings: a.bootWarnings,
+          traceWriter: a.traceWriter,
+          producer: 'mcp',
+          message: `[mcp] server "${failed.name}" failed to connect: ${failed.error}`,
+        });
+      }
     } finally {
       void emitSessionPhase(a.traceWriter, {
         phase: 'mcp_connect_done',
@@ -100,21 +109,5 @@ export async function connectReplMcp(a: {
       });
     }
   }
-  // Surface non-alwaysLoad server connection failures as user-visible boot
-  // warnings (#1702). These ride the same bootWarnings array as config-loader
-  // warnings, so they survive the REPL startup clear and appear post-clear.
-  if (mcpManager !== undefined) {
-    for (const s of mcpManager.getServerStates()) {
-      if (s.status === 'error') {
-        await recordBootWarning({
-          bootWarnings: a.bootWarnings,
-          traceWriter: a.traceWriter,
-          producer: 'mcp',
-          message: `[mcp] server "${s.serverName}" failed to connect: ${s.error ?? 'unknown error'}`,
-        });
-      }
-    }
-  }
-
   return mcpManager;
 }

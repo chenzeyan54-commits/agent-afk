@@ -41,7 +41,7 @@ describe('McpManager.fromConfig — mcp_server trace emission', () => {
     'emits a start/done pair with connected status + tool count for a server',
     async () => {
       const writer = new InMemoryTraceWriter();
-      manager = await McpManager.fromConfig(
+      ({ manager } = await McpManager.fromConfig(
         {
           testsrv: {
             type: 'stdio',
@@ -50,7 +50,7 @@ describe('McpManager.fromConfig — mcp_server trace emission', () => {
           },
         },
         { traceWriter: writer },
-      );
+      ));
 
       const phases = sessionPhases(writer);
       const start = phases.find((p) => p.phase === 'mcp_server_start');
@@ -76,13 +76,13 @@ describe('McpManager.fromConfig — mcp_server trace emission', () => {
     'emits no session_phase events when no traceWriter is supplied',
     async () => {
       // Sanity: the writer is opt-in; absence must not throw or emit.
-      manager = await McpManager.fromConfig({
+      ({ manager } = await McpManager.fromConfig({
         testsrv: {
           type: 'stdio',
           command: process.execPath,
           args: [FIXTURE],
         },
-      });
+      }));
       const states = manager.getServerStates();
       expect(states[0]!.status).toBe('connected');
     },

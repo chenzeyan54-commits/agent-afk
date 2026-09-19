@@ -185,9 +185,9 @@ describe('AnthropicDirectProvider — MCP permission allowlist refresh', () => {
   it(
     'allows an MCP tool absent from the static allowlist (OAuth late-discovery regression)',
     async () => {
-      manager = await McpManager.fromConfig({
+      ({ manager } = await McpManager.fromConfig({
         srv: { type: 'stdio', command: process.execPath, args: [FIXTURE] },
-      });
+      }));
 
       // Static allowlist omits the MCP tool entirely — simulates the snapshot
       // taken before the OAuth handshake discovered the server's tools.
@@ -223,9 +223,9 @@ describe('AnthropicDirectProvider — MCP permission allowlist refresh', () => {
   it(
     'still rejects a non-MCP tool absent from the allowlist (union is scoped, not blanket)',
     async () => {
-      manager = await McpManager.fromConfig({
+      ({ manager } = await McpManager.fromConfig({
         srv: { type: 'stdio', command: process.execPath, args: [FIXTURE] },
-      });
+      }));
 
       const provider = new AnthropicDirectProvider({
         permissions: { allowedTools: ['read_file'] },

@@ -33,6 +33,16 @@ import type { TraceSink } from '../trace/index.js';
 import type { McpServerLayer } from './env-containment.js';
 
 /**
+ * Structural record for a server that failed to connect during `fromConfig()`.
+ * Callers can inspect the returned `failedServers` array instead of having to
+ * call `getServerStates()` and filter for `status === 'error'` themselves.
+ */
+export interface FailedServerInfo {
+  name: string;
+  error: string;
+}
+
+/**
  * Per-server runtime record. Holds the live client, the list of tools the
  * server published, and the mutable `McpClientState` snapshot we surface
  * to consumers.
@@ -124,8 +134,11 @@ export class McpManager {
   }
 
   /**
-   * Load + connect every server. Returns the populated manager even when
-   * some servers fail — failures are recorded in per-server `state`.
+   * Load + connect every server. Returns `{ manager, failedServers }` where
+   * `failedServers` is the list of servers whose connect threw a non-fatal
+   * error (i.e. not `alwaysLoad`). Callers no longer need to call
+   * `getServerStates()` after construction just to discover failures.
+   *
    * Throws when:
    *   - any `alwaysLoad: true` server fails to connect, or
    *   - the resulting tool set has wire-name conflicts.
@@ -136,7 +149,7 @@ export class McpManager {
   static async fromConfig(
     servers: Record<string, McpServerConfig>,
     opts: McpManagerInitOptions = {},
-  ): Promise<McpManager> {
+  ): Promise<{ manager: McpManager; failedServers: FailedServerInfo[] }> {
     if (opts.warnings && opts.warnings.length > 0) {
       for (const w of opts.warnings) console.warn(`[mcp] ${w}`);
     }
@@ -294,7 +307,20 @@ export class McpManager {
     const manager = new McpManager(records);
     // Fill the deferred box so onToolListChanged closures can call refreshServer().
     managerBox.manager = manager;
-    return manager;
+
+    // Collect non-fatal connect failures so callers don't have to filter
+    // getServerStates() themselves.
+    const failedServers: FailedServerInfo[] = [];
+    for (const rec of records.values()) {
+      if (rec.state.status === 'error') {
+        failedServers.push({
+          name: rec.state.serverName,
+          error: rec.state.error ?? 'unknown error',
+        });
+      }
+    }
+
+    return { manager, failedServers };
   }
 
   /**

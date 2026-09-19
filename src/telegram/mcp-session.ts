@@ -53,12 +53,13 @@ export async function loadTelegramMcpManager(
     metadata: { serverCount: enabledCount },
   });
   try {
-    return await McpManager.fromConfig(loaded.mcpServers, {
+    const { manager } = await McpManager.fromConfig(loaded.mcpServers, {
       warnings: loaded.warnings,
       serverLayers: loaded.serverLayers,
       userAllowSecretEnv: loaded.userAllowSecretEnv,
       ...(opts.traceWriter !== undefined ? { traceWriter: opts.traceWriter } : {}),
     });
+    return manager;
   } finally {
     void emitSessionPhase(opts.traceWriter, {
       phase: 'mcp_connect_done',

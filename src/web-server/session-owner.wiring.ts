@@ -199,12 +199,13 @@ async function loadWebMcpManager(
     metadata: { serverCount: enabledCount },
   });
   try {
-    return await McpManager.fromConfig(loaded.mcpServers, {
+    const { manager } = await McpManager.fromConfig(loaded.mcpServers, {
       warnings: loaded.warnings,
       serverLayers: loaded.serverLayers,
       userAllowSecretEnv: loaded.userAllowSecretEnv,
       ...(traceWriter !== undefined ? { traceWriter } : {}),
     });
+    return manager;
   } finally {
     void emitSessionPhase(traceWriter, {
       phase: 'mcp_connect_done',

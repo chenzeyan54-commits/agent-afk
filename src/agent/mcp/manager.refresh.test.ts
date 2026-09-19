@@ -76,14 +76,14 @@ describe('McpManager — notifications/tools/list_changed live refresh', () => {
     'picks up a newly-registered tool without restarting the session',
     async () => {
       const triggerPath = join(tmp, 'trigger');
-      manager = await McpManager.fromConfig({
+      ({ manager } = await McpManager.fromConfig({
         dyn: {
           type: 'stdio',
           command: process.execPath,
           args: [FIXTURE],
           env: { MCP_FIXTURE_TRIGGER_FILE: triggerPath },
         },
-      });
+      }));
 
       // Pre-trigger snapshot: only `ping` is bridged.
       const before = manager.getMcpToolWireNames().sort();
@@ -124,12 +124,12 @@ describe('McpManager — notifications/tools/list_changed live refresh', () => {
   it(
     'refreshServer() throws when the server is not connected',
     async () => {
-      manager = await McpManager.fromConfig({
+      ({ manager } = await McpManager.fromConfig({
         absent: {
           type: 'stdio',
           command: '/this/path/does/not/exist-mcp',
         },
-      });
+      }));
       // Server should have failed to connect — refreshServer rejects.
       await expect(manager.refreshServer('absent')).rejects.toThrow(/not connected/);
     },
@@ -139,7 +139,7 @@ describe('McpManager — notifications/tools/list_changed live refresh', () => {
   it(
     'refreshServer() throws when the server name is unknown',
     async () => {
-      manager = await McpManager.fromConfig({});
+      ({ manager } = await McpManager.fromConfig({}));
       await expect(manager.refreshServer('nope')).rejects.toThrow(/not connected/);
     },
   );

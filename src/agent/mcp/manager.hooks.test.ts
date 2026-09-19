@@ -35,13 +35,13 @@ describe('MCP tool dispatch — hook integration', () => {
   it(
     'fires PreToolUse and PostToolUse for an MCP-bridged tool call',
     async () => {
-      manager = await McpManager.fromConfig({
+      ({ manager } = await McpManager.fromConfig({
         srv: {
           type: 'stdio',
           command: process.execPath,
           args: [FIXTURE],
         },
-      });
+      }));
 
       const handlers = manager.getMcpHandlers();
       const schemas = manager.getMcpTools();
@@ -87,13 +87,13 @@ describe('MCP tool dispatch — hook integration', () => {
   it(
     'honours a PreToolUse block decision for an MCP tool',
     async () => {
-      manager = await McpManager.fromConfig({
+      ({ manager } = await McpManager.fromConfig({
         srv: {
           type: 'stdio',
           command: process.execPath,
           args: [FIXTURE],
         },
-      });
+      }));
 
       const handlers = manager.getMcpHandlers();
       const schemas = manager.getMcpTools();

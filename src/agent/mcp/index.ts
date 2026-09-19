@@ -13,7 +13,7 @@ export type {
 } from './types.js';
 
 export { McpClient, type McpClientConnectResult } from './client.js';
-export { McpManager, type McpManagerInitOptions } from './manager.js';
+export { McpManager, type McpManagerInitOptions, type FailedServerInfo } from './manager.js';
 export {
   loadMcpConfig,
   loadMcpConfigFile,
