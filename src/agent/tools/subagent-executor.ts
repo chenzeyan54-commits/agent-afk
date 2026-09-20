@@ -527,6 +527,11 @@ export class SubagentExecutor implements SubagentControl {
           // reintroduces the cross-contamination bug isolation exists to
           // prevent (parallel siblings clobbering each other's edits/tests).
           const message = errorMessage(err);
+          // Item 1: release the budget slot claimed before the first await.
+          // Without this, worktree-creation failures permanently inflate the
+          // concurrent count, eventually exhausting AFK_MAX_CONCURRENT_AGENTS.
+          budgetRelease?.();
+          budgetRelease = undefined;
           return {
             content:
               `Failed to create isolated worktree for the subagent: ${message}. ` +
