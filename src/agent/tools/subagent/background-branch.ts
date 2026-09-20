@@ -124,6 +124,7 @@ export async function runBackgroundBranch(args: RunBackgroundBranchArgs): Promis
       await teardownBackgroundWorktree(isolationTeardown).catch((te: unknown) =>
         debugLog(`[isolation] background worktree teardown failed (register error): ${String(te)}`));
     }
+    onSettled?.(true);
     throw e;
   }
   // Wire manifest settlement (#1083): when the background job finishes,

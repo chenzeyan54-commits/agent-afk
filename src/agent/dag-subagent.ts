@@ -249,6 +249,7 @@ export async function runSubagentDAG(options: SubagentDAGOptions): Promise<DAGRu
       } catch (forkErr) {
         // Item 2: roll back the budget slot on fork failure.
         dagNodeBudgetRelease?.();
+        dagNodeBudgetRelease = undefined;
         throw forkErr;
       }
 

@@ -271,7 +271,7 @@ export const ENV_REGISTRY = [
   {
     name: 'AFK_MAX_CHILDREN_PER_AGENT',
     description:
-      'Maximum number of child agents a single agent may spawn (per-agent child limit). ' +
+      'Maximum number of child agents a single agent may spawn over its lifetime (per-agent child limit, not concurrent). ' +
       'Part of the delegation budget: guards against a single agent fanning out too many children. ' +
       'Accepted range 1-20; unset or unparseable means no per-agent child limit. ' +
       'Works alongside AFK_MAX_CONCURRENT_AGENTS and AFK_MAX_TOTAL_AGENTS.',

@@ -23,7 +23,7 @@ import { env } from '../../config/env.js';
 // ─── Configuration ──────────────────────────────────────────────────────────
 
 export interface DelegationBudgetConfig {
-  /** Max children a single agent (identified by sessionId) may spawn. */
+  /** Max children a single agent (identified by sessionId) may spawn (lifetime, not concurrent). */
   maxChildrenPerAgent?: number;
   /** Max agents running simultaneously across the entire tree. */
   maxConcurrentAgents?: number;
