@@ -36,6 +36,7 @@ import { appendRoutingDecision } from '../routing-telemetry.js';
 import { buildAgentMaxDepthRefusal } from './skill-depth-message.js';
 import { buildBudgetRefusalMessage } from './delegation-budget.js';
 import { collectPostRunWarnings } from './subagent-executor.write-intent.js';
+import { buildSubagentsLite } from './subagent-executor.lite-snapshot.js';
 import {
   buildWaveUnit,
   createManifest,
@@ -261,30 +262,8 @@ export class SubagentExecutor implements SubagentControl {
    * progress sink). Background `startedAt` is converted from epoch-ms to
    * ISO 8601 to match the rest of the snapshot's timestamp convention.
    */
-  getSubagentsLite(): {
-    active: Array<{
-      id: string;
-      status: 'idle' | 'running' | 'succeeded' | 'failed' | 'cancelled';
-    }>;
-    backgroundJobs: Array<{
-      jobId: string;
-      status: 'running' | 'completed' | 'failed' | 'cancelled';
-      startedAt: string;
-      label: string | null;
-    }>;
-  } {
-    const active = this.ctx.subagentManager
-      .list()
-      .map((h) => ({ id: h.id, status: h.status }));
-    const backgroundJobs = this.ctx.backgroundRegistry
-      ? this.ctx.backgroundRegistry.list().map((j) => ({
-          jobId: j.jobId,
-          status: j.status,
-          startedAt: new Date(j.startedAt).toISOString(),
-          label: j.label.length > 0 ? j.label : null,
-        }))
-      : [];
-    return { active, backgroundJobs };
+  getSubagentsLite(): ReturnType<typeof buildSubagentsLite> {
+    return buildSubagentsLite(this.ctx.subagentManager, this.ctx.backgroundRegistry);
   }
 
   /**
@@ -448,12 +427,19 @@ export class SubagentExecutor implements SubagentControl {
     }
 
     // Delegation budget: per-agent child cap, tree-wide concurrent/total caps.
+    // Item 1: record the spawn atomically with the admission check — BEFORE the
+    // first await — so concurrent parallel `agent` calls cannot all pass canSpawn
+    // before any reaches recordSpawn. The release callback is stored on
+    // `budgetRelease` below and rolled back in the fork-failure catch if needed.
+    let budgetRelease: (() => void) | undefined;
     if (this.ctx.delegationBudget) {
       const check = this.ctx.delegationBudget.canSpawn(this.ctx.parentSession.sessionId ?? '');
       if (!check.allowed) {
         void appendRoutingDecision({ ...identity, event: 'delegation.skipped', parent_session_id: this.ctx.parentSession.sessionId, reason: check.reason ?? 'budget', depth, ...(parsed.agent_type !== undefined ? { requested_name: parsed.agent_type } : {}) }).catch(() => {});
         return { content: buildBudgetRefusalMessage(check), isError: true };
       }
+      // Admitted: charge the slot now, synchronously, before any await.
+      budgetRelease = this.ctx.delegationBudget.recordSpawn(this.ctx.parentSession.sessionId ?? '');
     }
 
     // Transitive read-scope propagation (see ../subagent-read-scope): compute
@@ -561,7 +547,6 @@ export class SubagentExecutor implements SubagentControl {
       childConfig.timeoutMs = SUBAGENT_BACKGROUND_TIMEOUT_MS;
     }
 
-    let budgetRelease: (() => void) | undefined;
     let handle: Awaited<ReturnType<SubagentManager['forkSubagent']>>;
     try {
       handle = await this.ctx.subagentManager.forkSubagent({
@@ -612,9 +597,6 @@ export class SubagentExecutor implements SubagentControl {
       if (childParentSession !== undefined) {
         childParentSession.sessionId = handle.id;
       }
-      // Budget: record the successful spawn. Released on foreground completion
-      // or chained into background onSettled.
-      budgetRelease = this.ctx.delegationBudget?.recordSpawn(this.ctx.parentSession.sessionId ?? '');
       // Wave manifest: unit transitioned to 'running' once fork returns a handle.
       this.updateCurrentWaveUnit(call.id, 'running', undefined, isolationTeardown !== undefined ? childConfig.cwd : undefined);
       // Cancellation can land while a retry's fresh fork awaits hooks/read
@@ -648,6 +630,9 @@ export class SubagentExecutor implements SubagentControl {
       }
     } catch (err) {
       const message = errorMessage(err);
+      // Item 1: fork failed — roll back the budget slot claimed before the fork.
+      budgetRelease?.();
+      budgetRelease = undefined;
       // Wave manifest: unit failed because fork threw before returning a handle.
       this.updateCurrentWaveUnit(call.id, 'failed', message);
       void emitTelemetry({
@@ -725,6 +710,10 @@ export class SubagentExecutor implements SubagentControl {
           registry: this.ctx.inboundAttachmentRegistry ?? inboundAttachmentRegistry,
         });
       } catch (err) {
+        // Item 5: attachment resolution aborted — release the budget slot before
+        // tearing down the handle so the concurrent count is not permanently inflated.
+        budgetRelease?.();
+        budgetRelease = undefined;
         await handle.teardown().catch(() => undefined);
         return {
           content: `Agent tool attachment resolution failed: ${errorMessage(err)}`,
@@ -740,6 +729,12 @@ export class SubagentExecutor implements SubagentControl {
     // (Ctrl+B), shape success/failure, and clean up in a finally. The
     // executor's two in-flight maps are handed in so the SubagentControl seam
     // (promote/cancel) still observes and mutates the same live entries.
+    //
+    // Item 4: budgetRelease is threaded into runForegroundWithPromotion so
+    // that on promotion, adoptRunning passes it as onSettled to the registry.
+    // A `promotionTookBudget` ref is flipped synchronously when adoption
+    // succeeds, so the post-call release below is skipped only on that path.
+    const promotionTookBudget = { value: false };
     const result = await runForegroundWithPromotion({
       handle,
       signal: call.signal,
@@ -757,9 +752,11 @@ export class SubagentExecutor implements SubagentControl {
       promotionTriggers: this.promotionTriggers,
       activeForegroundHandles: this.activeForegroundHandles,
       ...(isolationTeardown !== undefined ? { isolationTeardown } : {}),
+      ...(budgetRelease !== undefined ? { budgetRelease, promotionTookBudget } : {}),
     });
-    // Budget: foreground child finished, release the concurrent slot.
-    budgetRelease?.();
+    // Budget: foreground child finished — release the slot, unless the
+    // promotion path deferred it to the registry's onSettled hook (Item 4).
+    if (!promotionTookBudget.value) budgetRelease?.();
     const warn = collectPostRunWarnings(childConfig.model, parsed.attachments !== undefined, namedAgent?.name, parsed.prompt, childWriteCapable, supportsVision);
     if (warn && !result.isError) result.content = warn + result.content;
     // Wave manifest: update unit to 'done' or 'failed' after the foreground run.

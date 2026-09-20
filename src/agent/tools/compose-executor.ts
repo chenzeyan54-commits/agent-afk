@@ -37,7 +37,6 @@ import { getCurrentSink } from '../_lib/skill-sink-channel.js';
 import { resolveMaxNestingDepth } from './nesting.js';
 import { resolveComposeNodeProvider } from './compose-node-provider.js';
 import { buildComposeMaxDepthRefusal } from './skill-depth-message.js';
-import { buildBudgetRefusalMessage } from './delegation-budget.js';
 import { getSessionsDir } from '../../paths.js';
 import { errorMessage } from '../../utils/errors.js';
 
@@ -640,14 +639,11 @@ export class ComposeExecutor {
       };
     }
 
-    // Delegation budget: tree-wide spawn limits (same gate as subagent-executor).
-    if (this.ctx.delegationBudget) {
-      const check = this.ctx.delegationBudget.canSpawn(this.ctx.parentSession.sessionId ?? '');
-      if (!check.allowed) {
-        void appendRoutingDecision({ ...identity, event: 'delegation.skipped', parent_session_id: this.ctx.parentSession.sessionId, reason: check.reason ?? 'budget', depth }).catch(() => {});
-        return { content: buildBudgetRefusalMessage(check), isError: true };
-      }
-    }
+    // Delegation budget: per-node accounting is handled in runSubagentDAG
+    // (dag-subagent.ts) via the delegationBudget option threaded below. The
+    // single canSpawn check here was removed (Item 2) because it was never
+    // paired with recordSpawn — a 20-node DAG would have passed the gate once
+    // but recorded zero spawns. Per-node checks in dag-subagent supersede it.
 
     // Contract: the per-node tool budget is enforced BY THE PROVIDER LOOP, not
     // by this executor. `max_tool_rounds_per_node` is forwarded to each node's
@@ -863,6 +859,8 @@ export class ComposeExecutor {
         edges: parsed.edges ?? [],
         failFast: parsed.fail_fast,
         nodeTimeoutMs: parsed.node_timeout_ms,
+        // Item 2: thread the budget so every DAG node is counted individually.
+        ...(this.ctx.delegationBudget !== undefined ? { delegationBudget: this.ctx.delegationBudget } : {}),
       });
 
       void appendRoutingDecision({
