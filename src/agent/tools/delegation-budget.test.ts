@@ -37,19 +37,58 @@ describe('DelegationBudget', () => {
   });
 
   describe('maxChildrenPerAgent', () => {
-    it('refuses when maxChildrenPerAgent exceeded for a given parentId', () => {
+    it('refuses when concurrent children reach the limit', () => {
       const budget = new DelegationBudget({ maxChildrenPerAgent: 2 });
-      budget.recordSpawn(PARENT_A).release();
-      budget.recordSpawn(PARENT_A).release();
+      // Spawn 2 without releasing — both are running
+      budget.recordSpawn(PARENT_A);
+      budget.recordSpawn(PARENT_A);
       const result = budget.canSpawn(PARENT_A);
       expect(result.allowed).toBe(false);
       expect(result.reason).toBe('max_children_per_agent');
       expect(result.detail).toContain('2');
     });
 
+    it('allows after children finish (concurrent cap, not lifetime)', () => {
+      const budget = new DelegationBudget({ maxChildrenPerAgent: 2 });
+      const r1 = budget.recordSpawn(PARENT_A);
+      const r2 = budget.recordSpawn(PARENT_A);
+      expect(budget.canSpawn(PARENT_A).allowed).toBe(false);
+      // Release both — slots freed
+      r1.release();
+      r2.release();
+      expect(budget.canSpawn(PARENT_A).allowed).toBe(true);
+    });
+
+    it('supports multi-wave workflows (research then build)', () => {
+      const budget = new DelegationBudget({ maxChildrenPerAgent: 2 });
+      // Wave 1: research
+      const r1 = budget.recordSpawn(PARENT_A);
+      const r2 = budget.recordSpawn(PARENT_A);
+      expect(budget.canSpawn(PARENT_A).allowed).toBe(false);
+      r1.release();
+      r2.release();
+      // Wave 2: build — should be allowed
+      const r3 = budget.recordSpawn(PARENT_A);
+      const r4 = budget.recordSpawn(PARENT_A);
+      expect(budget.canSpawn(PARENT_A).allowed).toBe(false);
+      r3.release();
+      r4.release();
+      // Wave 3: still works
+      expect(budget.canSpawn(PARENT_A).allowed).toBe(true);
+    });
+
+    it('release one slot allows one more spawn', () => {
+      const budget = new DelegationBudget({ maxChildrenPerAgent: 2 });
+      const r1 = budget.recordSpawn(PARENT_A);
+      budget.recordSpawn(PARENT_A);
+      expect(budget.canSpawn(PARENT_A).allowed).toBe(false);
+      r1.release(); // free one slot
+      expect(budget.canSpawn(PARENT_A).allowed).toBe(true);
+    });
+
     it('only counts children for the specific parent', () => {
       const budget = new DelegationBudget({ maxChildrenPerAgent: 1 });
-      budget.recordSpawn(PARENT_A).release();
+      budget.recordSpawn(PARENT_A); // PARENT_A at limit (1 running)
       // PARENT_B hasn't spawned any yet
       const result = budget.canSpawn(PARENT_B);
       expect(result.allowed).toBe(true);
@@ -126,10 +165,10 @@ describe('DelegationBudget', () => {
       expect(snap.total).toBe(0);
       // childrenByAgent must also be reverted: after rollback, PARENT_A has 0
       // children again, so two more spawns are still under the limit of 2.
-      budget.recordSpawn(PARENT_A).release();
-      expect(budget.canSpawn(PARENT_A).allowed).toBe(true); // 1 child, limit 2
-      budget.recordSpawn(PARENT_A).release();
-      expect(budget.canSpawn(PARENT_A).allowed).toBe(false); // 2 children == limit 2
+      budget.recordSpawn(PARENT_A);
+      expect(budget.canSpawn(PARENT_A).allowed).toBe(true); // 1 running, limit 2
+      budget.recordSpawn(PARENT_A);
+      expect(budget.canSpawn(PARENT_A).allowed).toBe(false); // 2 running == limit 2
     });
 
     it('rollback is idempotent', () => {
@@ -143,8 +182,8 @@ describe('DelegationBudget', () => {
   });
 
   describe('release callback', () => {
-    it('decrements concurrent but not total', () => {
-      const budget = new DelegationBudget({});
+    it('decrements concurrent and childrenByAgent but not total', () => {
+      const budget = new DelegationBudget({ maxChildrenPerAgent: 5 });
       const { release } = budget.recordSpawn(PARENT_A);
       expect(budget.snapshot().concurrent).toBe(1);
       expect(budget.snapshot().total).toBe(1);
@@ -152,6 +191,8 @@ describe('DelegationBudget', () => {
       const snap = budget.snapshot();
       expect(snap.concurrent).toBe(0);
       expect(snap.total).toBe(1); // total does not decrement on release
+      // childrenByAgent was decremented — can spawn again
+      expect(budget.canSpawn(PARENT_A).allowed).toBe(true);
     });
 
     it('is idempotent (double-call safe)', () => {
@@ -296,7 +337,7 @@ describe('buildBudgetRefusalMessage', () => {
     const msg = buildBudgetRefusalMessage(check);
     expect(msg).toContain('Delegation budget exceeded');
     expect(msg).toContain('Agent X');
-    expect(msg).toContain('Work inline');
+    expect(msg).toContain('Wait for a running child');
   });
 
   it('returns appropriate message for max_concurrent_agents', () => {
