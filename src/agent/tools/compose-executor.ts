@@ -37,6 +37,7 @@ import { getCurrentSink } from '../_lib/skill-sink-channel.js';
 import { resolveMaxNestingDepth } from './nesting.js';
 import { resolveComposeNodeProvider } from './compose-node-provider.js';
 import { buildComposeMaxDepthRefusal } from './skill-depth-message.js';
+import { buildBudgetRefusalMessage } from './delegation-budget.js';
 import { getSessionsDir } from '../../paths.js';
 import { errorMessage } from '../../utils/errors.js';
 
@@ -149,6 +150,8 @@ export interface ComposeExecutorContext {
   getReadScopeInputs?: () => ReadScopeInputs;
   /** Shared workspace store so compose DAG nodes can publish/receive findings. */
   workspaceStore?: WorkspaceStore;
+  /** Tree-wide delegation budget. Opt-in: undefined when no budget env vars set. */
+  delegationBudget?: import('./delegation-budget.js').DelegationBudget;
   /**
    * Callback wired to the per-call compose {@link SubagentManager} so every
    * successfully-completed DAG node's token usage and USD cost rolls up into
@@ -635,6 +638,15 @@ export class ComposeExecutor {
         content: buildComposeMaxDepthRefusal(depth, maxDepth),
         isError: true,
       };
+    }
+
+    // Delegation budget: tree-wide spawn limits (same gate as subagent-executor).
+    if (this.ctx.delegationBudget) {
+      const check = this.ctx.delegationBudget.canSpawn(this.ctx.parentSession.sessionId ?? '');
+      if (!check.allowed) {
+        void appendRoutingDecision({ ...identity, event: 'delegation.skipped', parent_session_id: this.ctx.parentSession.sessionId, reason: check.reason ?? 'budget', depth }).catch(() => {});
+        return { content: buildBudgetRefusalMessage(check), isError: true };
+      }
     }
 
     // Contract: the per-node tool budget is enforced BY THE PROVIDER LOOP, not
