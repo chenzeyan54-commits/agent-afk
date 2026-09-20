@@ -362,7 +362,7 @@ export async function runForkedSkillToResult(
   // the agent-tool path (which gained its own budget check in Item 1), so
   // without this gate a skill fork is invisible to the budget counters.
   const { delegationBudget } = internals.ctx;
-  let skillBudgetRelease: (() => void) | undefined;
+  let skillBudgetReceipt: import('../delegation-budget.js').SpawnReceipt | undefined;
   if (delegationBudget) {
     const budgetCheck = delegationBudget.canSpawn(internals.ctx.parentSession.sessionId ?? '');
     if (!budgetCheck.allowed) {
@@ -372,7 +372,7 @@ export async function runForkedSkillToResult(
       };
     }
     // Admitted: charge the slot synchronously before the first await.
-    skillBudgetRelease = delegationBudget.recordSpawn(internals.ctx.parentSession.sessionId ?? '');
+    skillBudgetReceipt = delegationBudget.recordSpawn(internals.ctx.parentSession.sessionId ?? '');
   }
 
   try {
@@ -410,6 +410,13 @@ export async function runForkedSkillToResult(
     return toolResult;
   } catch (err) {
     const message = errorMessage(err);
+    // Item 2: rollback ALL budget counters on fork failure (handle undefined).
+    // When handle IS defined the fork succeeded and the child ran — use release()
+    // in the finally below.
+    if (!handle) {
+      skillBudgetReceipt?.rollback();
+      skillBudgetReceipt = undefined;
+    }
     return { content: `${errorPrefix}: ${message}`, isError: true };
   } finally {
     // Order: per-handle teardown (seals child trace) → child manager (any
@@ -425,8 +432,9 @@ export async function runForkedSkillToResult(
     appendInjectContext(toolResult, injectContext);
     await childManager?.teardownAll();
     await manager.teardownAll();
-    // Item 3: release the concurrent budget slot. Idempotent (DelegationBudget
-    // guards double-release). Fires on both success and error paths.
-    skillBudgetRelease?.();
+    // Item 2: release the concurrent budget slot (fork succeeded, child ran).
+    // rollback() was already called in the catch block for fork-failure paths
+    // where skillBudgetReceipt was cleared, so this is a no-op there.
+    skillBudgetReceipt?.release();
   }
 }

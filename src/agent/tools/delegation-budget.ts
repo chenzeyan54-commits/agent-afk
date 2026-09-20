@@ -12,8 +12,10 @@
  * every depth in the tree shares the same counters.
  *
  * Invariant: `concurrent` never exceeds `total`. `recordSpawn` increments
- * both atomically; the release callback returned by `recordSpawn`
- * decrements only `concurrent` and is idempotent (double-release is safe).
+ * both atomically; the {@link SpawnReceipt} it returns has two callbacks:
+ * `release()` decrements only `concurrent` (normal completion), and
+ * `rollback()` undoes all three counters (fork failure before child ran).
+ * Both are idempotent — double-calls are safe.
  *
  * @module agent/tools/delegation-budget
  */
@@ -104,6 +106,26 @@ export interface DelegationBudgetSnapshot {
   config: DelegationBudgetConfig;
 }
 
+/** Return type of {@link DelegationBudget.recordSpawn}. */
+export interface SpawnReceipt {
+  /**
+   * Decrements only the `concurrent` counter. Call when the child finishes
+   * normally — `total` and `childrenByAgent` intentionally persist so the
+   * lifetime caps (`maxTotalAgents`, `maxChildrenPerAgent`) remain accurate.
+   * Idempotent: double-calls are safe.
+   */
+  release: () => void;
+  /**
+   * Undoes ALL three counters (`concurrent`, `total`, `childrenByAgent`).
+   * Call when a fork attempt fails BEFORE the child ever ran — i.e. when
+   * `forkSubagent` throws or the handle is cancelled before any work started.
+   * Without rollback, a fork failure permanently consumes budget slots,
+   * eventually exhausting `maxTotalAgents` or `maxChildrenPerAgent`.
+   * Idempotent: double-calls are safe.
+   */
+  rollback: () => void;
+}
+
 export class DelegationBudget {
   private concurrent = 0;
   private total = 0;
@@ -156,14 +178,20 @@ export class DelegationBudget {
   }
 
   /**
-   * Record a new agent spawn. Returns an idempotent release function
-   * that decrements the concurrent count when the child finishes.
+   * Record a new agent spawn. Returns a {@link SpawnReceipt} with two
+   * idempotent callbacks:
    *
-   * Contract: call AFTER the fork succeeds (handle returned). On fork
-   * failure, do not call — the counters should not reflect a child
-   * that never existed.
+   * - `release()` — decrements only `concurrent`. Use when the child finishes
+   *   normally. `total` and `childrenByAgent` are intentionally kept so the
+   *   lifetime caps remain accurate.
+   * - `rollback()` — undoes ALL three counters. Use when the fork fails before
+   *   the child ever ran (e.g. `forkSubagent` throws, handle cancelled pre-run).
+   *   Without rollback, a fork failure permanently consumes budget.
+   *
+   * Contract: call BEFORE the fork (pre-TOCTOU) and then either `release()` on
+   * success or `rollback()` on fork failure. Never call both.
    */
-  recordSpawn(parentId: string): () => void {
+  recordSpawn(parentId: string): SpawnReceipt {
     this.concurrent++;
     this.total++;
     this.childrenByAgent.set(
@@ -172,12 +200,31 @@ export class DelegationBudget {
     );
 
     let released = false;
-    return () => {
-      if (!released) {
+    let rolledBack = false;
+
+    const release = (): void => {
+      if (!released && !rolledBack) {
         released = true;
         this.concurrent = Math.max(0, this.concurrent - 1);
       }
     };
+
+    const rollback = (): void => {
+      if (!released && !rolledBack) {
+        rolledBack = true;
+        this.concurrent = Math.max(0, this.concurrent - 1);
+        this.total = Math.max(0, this.total - 1);
+        const prev = this.childrenByAgent.get(parentId) ?? 0;
+        const next = prev - 1;
+        if (next <= 0) {
+          this.childrenByAgent.delete(parentId);
+        } else {
+          this.childrenByAgent.set(parentId, next);
+        }
+      }
+    };
+
+    return { release, rollback };
   }
 
   /** Read-only snapshot for telemetry / diagnostics. */

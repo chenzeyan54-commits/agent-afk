@@ -34,7 +34,7 @@ import { resolveSubagentAttachments } from './subagent/attachment-resolve.js';
 import { inboundAttachmentRegistry } from '../content/attachment-registry.js';
 import { appendRoutingDecision } from '../routing-telemetry.js';
 import { buildAgentMaxDepthRefusal } from './skill-depth-message.js';
-import { buildBudgetRefusalMessage } from './delegation-budget.js';
+import { buildBudgetRefusalMessage, type SpawnReceipt } from './delegation-budget.js';
 import { collectPostRunWarnings } from './subagent-executor.write-intent.js';
 import { buildSubagentsLite } from './subagent-executor.lite-snapshot.js';
 import {
@@ -429,9 +429,10 @@ export class SubagentExecutor implements SubagentControl {
     // Delegation budget: per-agent child cap, tree-wide concurrent/total caps.
     // Item 1: record the spawn atomically with the admission check — BEFORE the
     // first await — so concurrent parallel `agent` calls cannot all pass canSpawn
-    // before any reaches recordSpawn. The release callback is stored on
-    // `budgetRelease` below and rolled back in the fork-failure catch if needed.
-    let budgetRelease: (() => void) | undefined;
+    // before any reaches recordSpawn. The SpawnReceipt is stored below; call
+    // receipt.rollback() on fork failure (undoes all counters) and receipt.release()
+    // on normal completion (decrements only concurrent).
+    let budgetReceipt: SpawnReceipt | undefined;
     if (this.ctx.delegationBudget) {
       const check = this.ctx.delegationBudget.canSpawn(this.ctx.parentSession.sessionId ?? '');
       if (!check.allowed) {
@@ -439,7 +440,7 @@ export class SubagentExecutor implements SubagentControl {
         return { content: buildBudgetRefusalMessage(check), isError: true };
       }
       // Admitted: charge the slot now, synchronously, before any await.
-      budgetRelease = this.ctx.delegationBudget.recordSpawn(this.ctx.parentSession.sessionId ?? '');
+      budgetReceipt = this.ctx.delegationBudget.recordSpawn(this.ctx.parentSession.sessionId ?? '');
     }
 
     // Transitive read-scope propagation (see ../subagent-read-scope): compute
@@ -527,11 +528,11 @@ export class SubagentExecutor implements SubagentControl {
           // reintroduces the cross-contamination bug isolation exists to
           // prevent (parallel siblings clobbering each other's edits/tests).
           const message = errorMessage(err);
-          // Item 1: release the budget slot claimed before the first await.
-          // Without this, worktree-creation failures permanently inflate the
-          // concurrent count, eventually exhausting AFK_MAX_CONCURRENT_AGENTS.
-          budgetRelease?.();
-          budgetRelease = undefined;
+          // Item 2: rollback ALL budget counters on worktree-creation failure
+          // (the child never ran). Without rollback, the failure permanently
+          // inflates total and childrenByAgent, exhausting lifetime caps.
+          budgetReceipt?.rollback();
+          budgetReceipt = undefined;
           return {
             content:
               `Failed to create isolated worktree for the subagent: ${message}. ` +
@@ -624,7 +625,11 @@ export class SubagentExecutor implements SubagentControl {
         // reach. Safe on a never-run handle: inFlight is null, so cancel()
         // skips session.interrupt().
         await handle.cancel();
-        budgetRelease?.();
+        // Item 2: rollback ALL counters — the handle was forked but the child
+        // never ran (cancelled between retry attempts). Rollback undoes total
+        // and childrenByAgent in addition to concurrent.
+        budgetReceipt?.rollback();
+        budgetReceipt = undefined;
         // Background: unlock + tear down the isolated worktree that will never
         // be registered (no registry entry → no markTerminal → no onCleanup).
         if (isolationTeardown && parsed.mode === 'background') {
@@ -635,9 +640,10 @@ export class SubagentExecutor implements SubagentControl {
       }
     } catch (err) {
       const message = errorMessage(err);
-      // Item 1: fork failed — roll back the budget slot claimed before the fork.
-      budgetRelease?.();
-      budgetRelease = undefined;
+      // Item 2: fork failed — rollback ALL budget counters (concurrent + total +
+      // childrenByAgent) because the child never ran.
+      budgetReceipt?.rollback();
+      budgetReceipt = undefined;
       // Wave manifest: unit failed because fork threw before returning a handle.
       this.updateCurrentWaveUnit(call.id, 'failed', message);
       void emitTelemetry({
@@ -683,10 +689,18 @@ export class SubagentExecutor implements SubagentControl {
         parentSessionId: this.ctx.parentSession.sessionId,
         // Intentional: updateWaveUnit (not updateCurrentWaveUnit) — the wave
         // may have ended before a background job settles (#1083).
-        onSettled: (isError) => {
-          if (capturedWaveId !== undefined) updateWaveUnit(capturedWaveId, capturedCallId, isError ? 'failed' : 'done');
-          budgetRelease?.();
-        },
+        // Item 1 fix: onSettled handles ONLY the wave-manifest concern (needs
+        // isError). budgetRelease is passed separately and wired through
+        // register({ onSettled: budgetRelease }) in background-branch.ts so
+        // the registry's markTerminal() fires it after cleanup — immune to the
+        // registry 'settled' event ordering race.
+        onSettled: capturedWaveId !== undefined
+          ? (isError) => { updateWaveUnit(capturedWaveId, capturedCallId, isError ? 'failed' : 'done'); }
+          : undefined,
+        // Item 2: use release() not rollback() — the fork succeeded, so only
+        // concurrent should decrement when the background job settles; total
+        // and childrenByAgent correctly reflect a real spawn.
+        budgetRelease: budgetReceipt?.release,
         onCleanup: isolationTeardown
           ? async () => {
               const result = await teardownBackgroundWorktree(isolationTeardown);
@@ -716,9 +730,11 @@ export class SubagentExecutor implements SubagentControl {
         });
       } catch (err) {
         // Item 5: attachment resolution aborted — release the budget slot before
-        // tearing down the handle so the concurrent count is not permanently inflated.
-        budgetRelease?.();
-        budgetRelease = undefined;
+        // tearing down the handle. The fork succeeded (child existed) so use
+        // release() not rollback() — total and childrenByAgent correctly reflect
+        // a real spawn even though it never ran a prompt.
+        budgetReceipt?.release();
+        budgetReceipt = undefined;
         await handle.teardown().catch(() => undefined);
         return {
           content: `Agent tool attachment resolution failed: ${errorMessage(err)}`,
@@ -735,10 +751,13 @@ export class SubagentExecutor implements SubagentControl {
     // executor's two in-flight maps are handed in so the SubagentControl seam
     // (promote/cancel) still observes and mutates the same live entries.
     //
-    // Item 4: budgetRelease is threaded into runForegroundWithPromotion so
-    // that on promotion, adoptRunning passes it as onSettled to the registry.
-    // A `promotionTookBudget` ref is flipped synchronously when adoption
-    // succeeds, so the post-call release below is skipped only on that path.
+    // Item 4: budgetRelease (receipt.release) is threaded into
+    // runForegroundWithPromotion so that on promotion, adoptRunning passes it
+    // as onSettled to the registry. A `promotionTookBudget` ref is flipped
+    // synchronously when adoption succeeds, so the post-call release below is
+    // skipped only on that path. The fork succeeded so always use release(),
+    // never rollback() — the child ran (or at least existed).
+    const budgetRelease = budgetReceipt?.release;
     const promotionTookBudget = { value: false };
     const result = await runForegroundWithPromotion({
       handle,

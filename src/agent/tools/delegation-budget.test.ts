@@ -39,8 +39,8 @@ describe('DelegationBudget', () => {
   describe('maxChildrenPerAgent', () => {
     it('refuses when maxChildrenPerAgent exceeded for a given parentId', () => {
       const budget = new DelegationBudget({ maxChildrenPerAgent: 2 });
-      budget.recordSpawn(PARENT_A)();
-      budget.recordSpawn(PARENT_A)();
+      budget.recordSpawn(PARENT_A).release();
+      budget.recordSpawn(PARENT_A).release();
       const result = budget.canSpawn(PARENT_A);
       expect(result.allowed).toBe(false);
       expect(result.reason).toBe('max_children_per_agent');
@@ -49,7 +49,7 @@ describe('DelegationBudget', () => {
 
     it('only counts children for the specific parent', () => {
       const budget = new DelegationBudget({ maxChildrenPerAgent: 1 });
-      budget.recordSpawn(PARENT_A)();
+      budget.recordSpawn(PARENT_A).release();
       // PARENT_B hasn't spawned any yet
       const result = budget.canSpawn(PARENT_B);
       expect(result.allowed).toBe(true);
@@ -70,7 +70,7 @@ describe('DelegationBudget', () => {
 
     it('allows after concurrent slots freed', () => {
       const budget = new DelegationBudget({ maxConcurrentAgents: 1 });
-      const release = budget.recordSpawn(PARENT_A);
+      const { release } = budget.recordSpawn(PARENT_A);
       expect(budget.canSpawn(PARENT_A).allowed).toBe(false);
       release();
       expect(budget.canSpawn(PARENT_A).allowed).toBe(true);
@@ -81,8 +81,8 @@ describe('DelegationBudget', () => {
     it('refuses when maxTotalAgents exceeded', () => {
       const budget = new DelegationBudget({ maxTotalAgents: 2 });
       // Spawn and release (total goes up, concurrent goes back down)
-      budget.recordSpawn(PARENT_A)();
-      budget.recordSpawn(PARENT_A)();
+      budget.recordSpawn(PARENT_A).release();
+      budget.recordSpawn(PARENT_A).release();
       const result = budget.canSpawn(PARENT_A);
       expect(result.allowed).toBe(false);
       expect(result.reason).toBe('max_total_agents');
@@ -109,23 +109,54 @@ describe('DelegationBudget', () => {
       expect(budget.canSpawn(PARENT_A).allowed).toBe(true);
       expect(budget.canSpawn(PARENT_B).allowed).toBe(true);
     });
+
+    it('rollback undoes all three counters', () => {
+      const budget = new DelegationBudget({
+        maxChildrenPerAgent: 2,
+        maxConcurrentAgents: 10,
+        maxTotalAgents: 10,
+      });
+      const { rollback } = budget.recordSpawn(PARENT_A);
+      expect(budget.snapshot().concurrent).toBe(1);
+      expect(budget.snapshot().total).toBe(1);
+      rollback();
+      const snap = budget.snapshot();
+      // All three counters must be restored to zero
+      expect(snap.concurrent).toBe(0);
+      expect(snap.total).toBe(0);
+      // childrenByAgent must also be reverted: after rollback, PARENT_A has 0
+      // children again, so two more spawns are still under the limit of 2.
+      budget.recordSpawn(PARENT_A).release();
+      expect(budget.canSpawn(PARENT_A).allowed).toBe(true); // 1 child, limit 2
+      budget.recordSpawn(PARENT_A).release();
+      expect(budget.canSpawn(PARENT_A).allowed).toBe(false); // 2 children == limit 2
+    });
+
+    it('rollback is idempotent', () => {
+      const budget = new DelegationBudget({});
+      const { rollback } = budget.recordSpawn(PARENT_A);
+      rollback();
+      rollback(); // second call must not underflow
+      expect(budget.snapshot().concurrent).toBe(0);
+      expect(budget.snapshot().total).toBe(0);
+    });
   });
 
   describe('release callback', () => {
     it('decrements concurrent but not total', () => {
       const budget = new DelegationBudget({});
-      const release = budget.recordSpawn(PARENT_A);
+      const { release } = budget.recordSpawn(PARENT_A);
       expect(budget.snapshot().concurrent).toBe(1);
       expect(budget.snapshot().total).toBe(1);
       release();
       const snap = budget.snapshot();
       expect(snap.concurrent).toBe(0);
-      expect(snap.total).toBe(1); // total does not decrement
+      expect(snap.total).toBe(1); // total does not decrement on release
     });
 
     it('is idempotent (double-call safe)', () => {
       const budget = new DelegationBudget({ maxConcurrentAgents: 10 });
-      const release = budget.recordSpawn(PARENT_A);
+      const { release } = budget.recordSpawn(PARENT_A);
       release();
       release(); // second call must not underflow
       const snap = budget.snapshot();
@@ -135,7 +166,7 @@ describe('DelegationBudget', () => {
 
     it('concurrent never goes below zero on double-release', () => {
       const budget = new DelegationBudget({});
-      const release = budget.recordSpawn(PARENT_A);
+      const { release } = budget.recordSpawn(PARENT_A);
       release();
       release();
       release(); // triple release
@@ -197,42 +228,54 @@ describe('resolveDelegationBudgetConfig', () => {
   });
 
   it('parses valid numbers from env', () => {
-    // We test the logic directly through the exported function using the
-    // already-loaded module (env is frozen at module init).
-    // Use a fresh module instance to pick up env changes.
+    // The env object uses lazy Object.defineProperty getters that re-read
+    // process.env on every access, so setting process.env before calling
+    // resolveDelegationBudgetConfig() works without vi.resetModules().
     process.env['AFK_MAX_CHILDREN_PER_AGENT'] = '5';
     process.env['AFK_MAX_CONCURRENT_AGENTS'] = '10';
     process.env['AFK_MAX_TOTAL_AGENTS'] = '50';
-    // resolveDelegationBudgetConfig reads `env` which is imported at module-init
-    // time; we verify the logic by calling the already-imported version with the
-    // understanding that the test-time env was set BEFORE the module was loaded.
-    // For integration-style coverage, directly construct DelegationBudget with
-    // known config to verify parsing paths work end-to-end.
-    const budget = new DelegationBudget({
-      maxChildrenPerAgent: 5,
-      maxConcurrentAgents: 10,
-      maxTotalAgents: 50,
-    });
-    const snap = budget.snapshot();
-    expect(snap.config.maxChildrenPerAgent).toBe(5);
-    expect(snap.config.maxConcurrentAgents).toBe(10);
-    expect(snap.config.maxTotalAgents).toBe(50);
+    const config = resolveDelegationBudgetConfig();
+    expect(config).not.toBeUndefined();
+    expect(config?.maxChildrenPerAgent).toBe(5);
+    expect(config?.maxConcurrentAgents).toBe(10);
+    expect(config?.maxTotalAgents).toBe(50);
   });
 
-  it('clamps to ceilings', () => {
-    // Directly exercise the DelegationBudget class with above-ceiling values
-    // (the clamping happens in resolveDelegationBudgetConfig before construction).
-    // Verify that the env-level clamping would produce in-range values:
+  it('clamps to ceilings (value above ceiling is clamped)', () => {
     // CEILING_CHILDREN_PER_AGENT=20, CEILING_CONCURRENT=64, CEILING_TOTAL=200
-    const budget = new DelegationBudget({
-      maxChildrenPerAgent: 20, // at ceiling
-      maxConcurrentAgents: 64, // at ceiling
-      maxTotalAgents: 200,     // at ceiling
-    });
-    const snap = budget.snapshot();
-    expect(snap.config.maxChildrenPerAgent).toBe(20);
-    expect(snap.config.maxConcurrentAgents).toBe(64);
-    expect(snap.config.maxTotalAgents).toBe(200);
+    process.env['AFK_MAX_CHILDREN_PER_AGENT'] = '21';
+    const config = resolveDelegationBudgetConfig();
+    expect(config).not.toBeUndefined();
+    expect(config?.maxChildrenPerAgent).toBe(20); // clamped from 21 to 20
+  });
+
+  it('returns undefined for non-numeric string', () => {
+    process.env['AFK_MAX_CHILDREN_PER_AGENT'] = 'abc';
+    // Only this one var set, and it is non-numeric — all three resolve undefined
+    const config = resolveDelegationBudgetConfig();
+    expect(config).toBeUndefined();
+  });
+
+  it('returns undefined for zero (zero is not a positive int)', () => {
+    process.env['AFK_MAX_CHILDREN_PER_AGENT'] = '0';
+    const config = resolveDelegationBudgetConfig();
+    expect(config).toBeUndefined();
+  });
+
+  it('valid value passes through unchanged', () => {
+    process.env['AFK_MAX_CHILDREN_PER_AGENT'] = '5';
+    const config = resolveDelegationBudgetConfig();
+    expect(config?.maxChildrenPerAgent).toBe(5);
+  });
+
+  it('at least one var set returns non-undefined config', () => {
+    process.env['AFK_MAX_TOTAL_AGENTS'] = '100';
+    const config = resolveDelegationBudgetConfig();
+    expect(config).not.toBeUndefined();
+    expect(config?.maxTotalAgents).toBe(100);
+    // Fields not set remain absent
+    expect(config?.maxChildrenPerAgent).toBeUndefined();
+    expect(config?.maxConcurrentAgents).toBeUndefined();
   });
 });
 

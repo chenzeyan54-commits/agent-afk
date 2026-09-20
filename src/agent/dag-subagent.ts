@@ -20,7 +20,7 @@ import { resolveSoftDeadlineMs } from './providers/shared/soft-deadline.js';
 import { resolveSubagentTimeoutMs } from './subagent/constants.js';
 import { isTooBroadRoot, ungatedSensitiveRoot } from './tools/subagent/root-validation.js';
 import { realpathSafe } from './tools/handlers/_cwd-utils.js';
-import type { DelegationBudget } from './tools/delegation-budget.js';
+import type { DelegationBudget, SpawnReceipt } from './tools/delegation-budget.js';
 
 export interface SubagentDAGNode {
   id: string;
@@ -189,7 +189,7 @@ export async function runSubagentDAG(options: SubagentDAGOptions): Promise<DAGRu
       // counted and released. parentId is the parent session's sessionId so the
       // per-agent child count tracks against the root (compose nodes share one
       // parent session, mirroring the agent-tool path).
-      let dagNodeBudgetRelease: (() => void) | undefined;
+      let dagNodeBudgetReceipt: SpawnReceipt | undefined;
       if (delegationBudget) {
         const budgetCheck = delegationBudget.canSpawn(parentSession.sessionId ?? '');
         if (!budgetCheck.allowed) {
@@ -197,7 +197,7 @@ export async function runSubagentDAG(options: SubagentDAGOptions): Promise<DAGRu
             `DAG node "${spec.id}" blocked by delegation budget: ${budgetCheck.detail ?? budgetCheck.reason ?? 'budget exceeded'}`,
           );
         }
-        dagNodeBudgetRelease = delegationBudget.recordSpawn(parentSession.sessionId ?? '');
+        dagNodeBudgetReceipt = delegationBudget.recordSpawn(parentSession.sessionId ?? '');
       }
 
       let handle: Awaited<ReturnType<typeof manager.forkSubagent>>;
@@ -247,9 +247,10 @@ export async function runSubagentDAG(options: SubagentDAGOptions): Promise<DAGRu
           ...(spec.parentId !== undefined ? { parentId: spec.parentId } : {}),
         });
       } catch (forkErr) {
-        // Item 2: roll back the budget slot on fork failure.
-        dagNodeBudgetRelease?.();
-        dagNodeBudgetRelease = undefined;
+        // Item 2: rollback ALL budget counters on fork failure — the child
+        // never ran, so total and childrenByAgent must not reflect this spawn.
+        dagNodeBudgetReceipt?.rollback();
+        dagNodeBudgetReceipt = undefined;
         throw forkErr;
       }
 
@@ -308,7 +309,9 @@ export async function runSubagentDAG(options: SubagentDAGOptions): Promise<DAGRu
         nodeSignal.removeEventListener('abort', onNodeAbort);
         await handle.teardown().catch(() => undefined);
         // Item 2: release the concurrent slot now that the node has settled.
-        dagNodeBudgetRelease?.();
+        // The fork succeeded, so use release() — total and childrenByAgent
+        // correctly reflect a real spawn even if the run aborted mid-flight.
+        dagNodeBudgetReceipt?.release();
       }
     },
   }));
