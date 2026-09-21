@@ -17,7 +17,7 @@ import { dirname, join } from 'node:path';
 import type { AgentConfig } from './types.js';
 import type { Telegraf } from 'telegraf';
 import { CronScheduler, type SchedulerOptions, type TelemetryRecord } from './daemon/scheduler.js';
-import type { ScheduledTask, TriggerMode } from './daemon/triggers.js';
+import type { ScheduledTask, TaskExecutor, TriggerMode } from './daemon/triggers.js';
 import { getDaemonStateDir } from '../paths.js';
 import { listenWithRecovery, closeServer } from './daemon.listen.js';
 
@@ -342,6 +342,7 @@ async function handleRequestAsync(
       return;
     }
     const notifyChatRaw = obj['notifyChat'];
+    const executorRaw = obj['executor'];
     const task: ScheduledTask = {
       taskId: obj['taskId'] as string,
       command: obj['command'] as string,
@@ -352,6 +353,9 @@ async function handleRequestAsync(
         : {}),
       ...(typeof notifyChatRaw === 'number' || typeof notifyChatRaw === 'string'
         ? { notifyChat: notifyChatRaw }
+        : {}),
+      ...(executorRaw === 'agent' || executorRaw === 'shell' || executorRaw === 'builtin'
+        ? { executor: executorRaw as TaskExecutor }
         : {}),
     };
     try {
