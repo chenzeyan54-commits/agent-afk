@@ -1760,6 +1760,102 @@ describe('ComposeExecutor', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Per-node max_tool_rounds and max_turns wiring
+  // ---------------------------------------------------------------------------
+  describe('per-node max_tool_rounds wiring', () => {
+    it('per-node max_tool_rounds overrides top-level max_tool_rounds_per_node', async () => {
+      mockRunSubagentDAG.mockResolvedValue({ outputs: { a: 'ok', b: 'ok' }, failed: [], skipped: [] });
+      const executor = new ComposeExecutor(makeContext());
+
+      await executor.execute(makeCall({
+        nodes: [
+          { id: 'a', prompt: 'task a', max_tool_rounds: 7 },
+          { id: 'b', prompt: 'task b' },
+        ],
+        max_tool_rounds_per_node: 20,
+      }));
+
+      const dagOpts = mockRunSubagentDAG.mock.calls[0][0];
+      // Node 'a' has an explicit per-node override — use it
+      expect(dagOpts.nodes[0].maxToolUseIterations).toBe(7);
+      // Node 'b' falls back to top-level
+      expect(dagOpts.nodes[1].maxToolUseIterations).toBe(20);
+    });
+
+    it('per-node max_tool_rounds applies without top-level set', async () => {
+      mockRunSubagentDAG.mockResolvedValue({ outputs: { a: 'ok' }, failed: [], skipped: [] });
+      const executor = new ComposeExecutor(makeContext());
+
+      await executor.execute(makeCall({
+        nodes: [{ id: 'a', prompt: 'task a', max_tool_rounds: 5 }],
+      }));
+
+      const dagOpts = mockRunSubagentDAG.mock.calls[0][0];
+      expect(dagOpts.nodes[0].maxToolUseIterations).toBe(5);
+    });
+
+    it('top-level max_tool_rounds_per_node applies when per-node max_tool_rounds is absent', async () => {
+      mockRunSubagentDAG.mockResolvedValue({ outputs: { a: 'ok' }, failed: [], skipped: [] });
+      const executor = new ComposeExecutor(makeContext());
+
+      await executor.execute(makeCall({
+        nodes: [{ id: 'a', prompt: 'task a' }],
+        max_tool_rounds_per_node: 15,
+      }));
+
+      const dagOpts = mockRunSubagentDAG.mock.calls[0][0];
+      expect(dagOpts.nodes[0].maxToolUseIterations).toBe(15);
+    });
+
+    it('omits maxToolUseIterations when neither per-node nor top-level is set', async () => {
+      mockRunSubagentDAG.mockResolvedValue({ outputs: { a: 'ok' }, failed: [], skipped: [] });
+      const executor = new ComposeExecutor(makeContext());
+
+      await executor.execute(makeCall({ nodes: [{ id: 'a', prompt: 'task a' }] }));
+
+      const dagOpts = mockRunSubagentDAG.mock.calls[0][0];
+      expect(dagOpts.nodes[0]).not.toHaveProperty('maxToolUseIterations');
+    });
+  });
+
+  describe('per-node max_turns wiring', () => {
+    it('per-node max_turns threads through to SubagentDAGNode.maxTurns', async () => {
+      mockRunSubagentDAG.mockResolvedValue({ outputs: { a: 'ok' }, failed: [], skipped: [] });
+      const executor = new ComposeExecutor(makeContext());
+
+      await executor.execute(makeCall({
+        nodes: [{ id: 'a', prompt: 'task a', max_turns: 12 }],
+      }));
+
+      const dagOpts = mockRunSubagentDAG.mock.calls[0][0];
+      expect(dagOpts.nodes[0].maxTurns).toBe(12);
+    });
+
+    it('max_turns 0 (unlimited) omits maxTurns from the DAG node', async () => {
+      mockRunSubagentDAG.mockResolvedValue({ outputs: { a: 'ok' }, failed: [], skipped: [] });
+      const executor = new ComposeExecutor(makeContext());
+
+      await executor.execute(makeCall({
+        nodes: [{ id: 'a', prompt: 'task a', max_turns: 0 }],
+      }));
+
+      const dagOpts = mockRunSubagentDAG.mock.calls[0][0];
+      // 0 = unlimited — executor does not forward it so fork inherits its default
+      expect(dagOpts.nodes[0]).not.toHaveProperty('maxTurns');
+    });
+
+    it('omits maxTurns when max_turns is absent', async () => {
+      mockRunSubagentDAG.mockResolvedValue({ outputs: { a: 'ok' }, failed: [], skipped: [] });
+      const executor = new ComposeExecutor(makeContext());
+
+      await executor.execute(makeCall({ nodes: [{ id: 'a', prompt: 'task a' }] }));
+
+      const dagOpts = mockRunSubagentDAG.mock.calls[0][0];
+      expect(dagOpts.nodes[0]).not.toHaveProperty('maxTurns');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // CHILD_ALLOWED_TOOLS safety invariant (real buildComposeNodeProvider)
   //
   // These tests import buildComposeNodeProvider directly (bypassing the mock)

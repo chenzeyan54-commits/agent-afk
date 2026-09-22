@@ -22,6 +22,10 @@ export interface ComposeNodeInput {
   readRoots?: string[];
   /** Per-node extra write roots. Same semantics as the agent tool's writeRoots. */
   writeRoots?: string[];
+  /** Per-node max conversation turns. 0 = unlimited. */
+  max_turns?: number;
+  /** Per-node tool-use round budget. Overrides compose-level max_tool_rounds_per_node. */
+  max_tool_rounds?: number;
 }
 
 export interface ComposeInput {
@@ -192,7 +196,50 @@ export function parseComposeInput(input: unknown): ParseResult {
 
     const { cwd, readRoots, writeRoots } = parseNodePaths(n, id);
 
-    parsed.push({ id, prompt, model, cwd, readRoots, writeRoots });
+    let nodeMaxTurns: number | undefined;
+    if (n['max_turns'] !== undefined) {
+      const val = n['max_turns'];
+      if (typeof val !== 'number' || !Number.isFinite(val)) {
+        throw new Error(`Node "${id}" max_turns must be a non-negative integer`);
+      }
+      if (!Number.isInteger(val)) {
+        throw new Error(`Node "${id}" max_turns must be an integer (got ${val})`);
+      }
+      if (val < 0) {
+        throw new Error(`Node "${id}" max_turns must be a non-negative integer (got ${val})`);
+      }
+      nodeMaxTurns = val;
+    }
+
+    let nodeMaxToolRounds: number | undefined;
+    if (n['max_tool_rounds'] !== undefined) {
+      const val = n['max_tool_rounds'];
+      if (typeof val !== 'number' || !Number.isFinite(val) || val <= 0) {
+        throw new Error(`Node "${id}" max_tool_rounds must be a positive integer`);
+      }
+      if (!Number.isInteger(val)) {
+        throw new Error(
+          `Node "${id}" max_tool_rounds must be an integer (got ${val}). ` +
+          `Tool-use rounds are discrete events; fractional budgets are not meaningful.`,
+        );
+      }
+      if (val < MIN_NODE_TOOL_ROUNDS) {
+        throw new Error(`Node "${id}" max_tool_rounds must be at least ${MIN_NODE_TOOL_ROUNDS}`);
+      }
+      if (val > MAX_NODE_TOOL_ROUNDS) {
+        throw new Error(
+          `Node "${id}" max_tool_rounds must be at most ${MAX_NODE_TOOL_ROUNDS} ` +
+          `(got ${val}). A larger budget no longer constrains useful work.`,
+        );
+      }
+      nodeMaxToolRounds = val;
+    }
+
+    parsed.push({
+      id, prompt, model, cwd, readRoots, writeRoots,
+      ...(nodeMaxTurns !== undefined ? { max_turns: nodeMaxTurns } : {}),
+      ...(nodeMaxToolRounds !== undefined ? { max_tool_rounds: nodeMaxToolRounds } : {}),
+    });
   }
 
   let edges: DAGEdge[] | undefined;

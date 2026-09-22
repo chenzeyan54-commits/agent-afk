@@ -174,3 +174,79 @@ describe('parseComposeInput — combined fields', () => {
     expect(node.readRoots).toEqual(['/data']);
   });
 });
+
+describe('parseComposeInput — per-node max_turns', () => {
+  it('accepts 0 (unlimited)', () => {
+    const { parsed } = parseComposeInput(minimal({ max_turns: 0 }));
+    expect(parsed.nodes[0]!.max_turns).toBe(0);
+  });
+
+  it('accepts a positive integer', () => {
+    const { parsed } = parseComposeInput(minimal({ max_turns: 10 }));
+    expect(parsed.nodes[0]!.max_turns).toBe(10);
+  });
+
+  it('omits max_turns when not provided', () => {
+    const { parsed } = parseComposeInput(minimal());
+    expect(parsed.nodes[0]!.max_turns).toBeUndefined();
+  });
+
+  it('rejects negative integer', () => {
+    expect(() => parseComposeInput(minimal({ max_turns: -1 }))).toThrow(
+      /max_turns must be a non-negative integer/,
+    );
+  });
+
+  it('rejects non-integer number', () => {
+    expect(() => parseComposeInput(minimal({ max_turns: 1.5 }))).toThrow(
+      /max_turns must be an integer/,
+    );
+  });
+
+  it('rejects non-number (string)', () => {
+    expect(() => parseComposeInput(minimal({ max_turns: 'five' }))).toThrow(
+      /max_turns must be a non-negative integer/,
+    );
+  });
+});
+
+describe('parseComposeInput — per-node max_tool_rounds', () => {
+  it('accepts 1 (minimum)', () => {
+    const { parsed } = parseComposeInput(minimal({ max_tool_rounds: 1 }));
+    expect(parsed.nodes[0]!.max_tool_rounds).toBe(1);
+  });
+
+  it('accepts 1000 (maximum)', () => {
+    const { parsed } = parseComposeInput(minimal({ max_tool_rounds: 1000 }));
+    expect(parsed.nodes[0]!.max_tool_rounds).toBe(1000);
+  });
+
+  it('omits max_tool_rounds when not provided', () => {
+    const { parsed } = parseComposeInput(minimal());
+    expect(parsed.nodes[0]!.max_tool_rounds).toBeUndefined();
+  });
+
+  it('rejects 0 (compose path requires positive integer)', () => {
+    expect(() => parseComposeInput(minimal({ max_tool_rounds: 0 }))).toThrow(
+      /max_tool_rounds must be a positive integer/,
+    );
+  });
+
+  it('rejects 1001 (above ceiling)', () => {
+    expect(() => parseComposeInput(minimal({ max_tool_rounds: 1001 }))).toThrow(
+      /max_tool_rounds must be at most 1000/,
+    );
+  });
+
+  it('rejects non-integer number', () => {
+    expect(() => parseComposeInput(minimal({ max_tool_rounds: 2.5 }))).toThrow(
+      /max_tool_rounds must be an integer/,
+    );
+  });
+
+  it('rejects non-number (string)', () => {
+    expect(() => parseComposeInput(minimal({ max_tool_rounds: 'ten' }))).toThrow(
+      /max_tool_rounds must be a positive integer/,
+    );
+  });
+});

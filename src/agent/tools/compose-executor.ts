@@ -594,9 +594,18 @@ export class ComposeExecutor {
           idPrefix: `compose-${n.id}`,
           ...(resolvedNodeApiKey !== undefined ? { apiKey: resolvedNodeApiKey } : {}),
           // Budget enforcement: the provider loop caps tool-use rounds and
-          // winds down gracefully. Omitted when unset so the fork keeps
+          // winds down gracefully. Per-node max_tool_rounds overrides the
+          // top-level max_tool_rounds_per_node; when absent, the top-level
+          // value is used. Omitted when both are unset so the fork keeps
           // SUBAGENT_DEFAULT_MAX_TOOL_USE_ITERATIONS (subagent.ts).
-          ...(maxToolRoundsPerNode !== undefined ? { maxToolUseIterations: maxToolRoundsPerNode } : {}),
+          ...(() => {
+            const effectiveRounds = n.max_tool_rounds ?? maxToolRoundsPerNode;
+            return effectiveRounds !== undefined ? { maxToolUseIterations: effectiveRounds } : {};
+          })(),
+          // Per-node turn cap. When absent or 0, the fork inherits session
+          // defaults (no cap). The parse layer stores 0 only for the
+          // "unlimited" intent, so we omit it here too.
+          ...(n.max_turns !== undefined && n.max_turns > 0 ? { maxTurns: n.max_turns } : {}),
           // Per-node filesystem overrides: cwd, extraReadRoots, writeRoots. When
           // set on the node, they refine the fork's scope. extraReadRoots is
           // forwarded as the ADDITIVE field (AgentConfig.extraReadRoots) so the

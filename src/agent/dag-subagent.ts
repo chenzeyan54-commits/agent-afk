@@ -90,6 +90,13 @@ export interface SubagentDAGNode {
    */
   maxToolUseIterations?: number;
   /**
+   * Per-node cap on conversation turns. Forwarded into the fork config as
+   * `AgentConfig.maxTurns`. When `0` or absent the fork inherits session
+   * defaults (no cap). The compose tool's parse layer accepts `0` as
+   * "unlimited" and omits the field, so arriving values here are always ≥1.
+   */
+  maxTurns?: number;
+  /**
    * Optional pre-built provider for this node's subagent session. When set,
    * forwarded directly into the fork config as `AgentConfig.provider` so the
    * node's `AgentSession` uses this provider instead of falling back to bare
@@ -239,6 +246,7 @@ export async function runSubagentDAG(options: SubagentDAGOptions): Promise<DAGRu
             ...(spec.maxToolUseIterations !== undefined
               ? { maxToolUseIterations: spec.maxToolUseIterations }
               : {}),
+            ...(spec.maxTurns !== undefined ? { maxTurns: spec.maxTurns } : {}),
             // Workspace provider: when present, the compose executor has built a
             // workspace-aware provider via buildComposeNodeProvider so that this
             // node can call workspace_publish / workspace_query. Without it the
