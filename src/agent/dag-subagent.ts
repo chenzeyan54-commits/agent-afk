@@ -9,6 +9,7 @@
  * @module agent/dag-subagent
  */
 
+import type { ContentBlockParam } from '@anthropic-ai/sdk/resources';
 import type { ZodType } from 'zod';
 import type { AgentModelInput, CanUseTool, IAgentSession } from './types.js';
 import type { ModelProvider } from './provider.js';
@@ -84,6 +85,12 @@ export interface SubagentDAGNode {
    * `AgentConfig.maxTurns`. Omit to inherit the session default (unlimited).
    */
   maxTurns?: number;
+  /**
+   * Pre-resolved image attachments. When present, the text prompt is wrapped
+   * into a `ContentBlockParam[]` that interleaves text + image blocks before
+   * being passed to `handle.runToResult`.
+   */
+  resolvedAttachments?: ContentBlockParam[];
   /**
    * Optional pre-built provider for this node's subagent session. When set,
    * forwarded directly into the fork config as `AgentConfig.provider` so the
@@ -278,7 +285,14 @@ export async function runSubagentDAG(options: SubagentDAGOptions): Promise<DAGRu
       try {
         if (nodeSignal.aborted) throw new DOMException('Aborted', 'AbortError');
         const prompt = spec.promptBuilder(inputs);
-        const result = await handle.runToResult(prompt);
+        // When the node has pre-resolved image attachments, wrap the text
+        // prompt into a ContentBlockParam[] so the child sees both text and
+        // images. Otherwise pass the bare string (zero-cost path).
+        const userMessage: string | ContentBlockParam[] =
+          spec.resolvedAttachments !== undefined && spec.resolvedAttachments.length > 0
+            ? [{ type: 'text' as const, text: prompt }, ...spec.resolvedAttachments]
+            : prompt;
+        const result = await handle.runToResult(userMessage);
         if (result.status !== 'succeeded') {
           // When a TimeoutError was the abort reason, surface it as the
           // outer error message so the parent learns *why* the node stopped

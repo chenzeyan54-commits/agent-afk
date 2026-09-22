@@ -641,6 +641,7 @@ export const composeTool: AnthropicToolDef = {
             model: { type: 'string', description: 'Model override (default: sonnet).' },
             max_tool_rounds: { type: 'number', description: 'Per-node tool-round budget (1–1000). Overrides compose-level max_tool_rounds_per_node.' },
             max_turns: { type: 'number', description: 'Per-node turn budget. Positive integer.' },
+            attachments: { type: 'array', items: { type: 'string' }, description: 'Image IDs or file paths to pass to this node.' },
           }, required: ['id', 'prompt'], additionalProperties: false,
         },
         description: 'Subagent tasks to execute.',
@@ -652,9 +653,7 @@ export const composeTool: AnthropicToolDef = {
           properties: {
             from: { type: 'string', description: 'Upstream node id.' },
             to: { type: 'string', description: 'Downstream node id.' },
-          },
-          required: ['from', 'to'],
-          additionalProperties: false,
+          }, required: ['from', 'to'], additionalProperties: false,
         },
         description: 'Dependencies between nodes. Omit for pure parallel execution.',
       },

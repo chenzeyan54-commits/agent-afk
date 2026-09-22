@@ -38,6 +38,7 @@ import { resolveMaxNestingDepth } from './nesting.js';
 import { resolveComposeNodeProvider } from './compose-node-provider.js';
 import { buildComposeMaxDepthRefusal } from './skill-depth-message.js';
 import { parseComposeInput, type ComposeInput } from './compose-input-parse.js';
+import { resolveComposeNodeAttachments } from './compose-node-attachments.js';
 import { getSessionsDir } from '../../paths.js';
 import { errorMessage } from '../../utils/errors.js';
 
@@ -532,6 +533,12 @@ export class ComposeExecutor {
       //     (which is still `compose-<nodeId>` for routing telemetry).
       const composeToolUseId = call.id;
       const totalNodes = parsed.nodes.length;
+
+      // Pre-resolve per-node image attachments (async file reads + policy).
+      const resolvedNodeAttachments = await resolveComposeNodeAttachments(
+        parsed.nodes, this.currentCwd, this.ctx,
+      );
+
       const dagNodes: SubagentDAGNode[] = parsed.nodes.map((n, i) => {
         // Resolve the node's effective model and provider FIRST so we can
         // decide whether to forward an API key. Mirrors the resolvedChildApiKey
@@ -599,6 +606,8 @@ export class ComposeExecutor {
           ...(n.max_turns !== undefined ? { maxTurns: n.max_turns } : {}),
           // Workspace-enabled provider (see compose-node-provider.ts).
           ...resolveComposeNodeProvider(nodeModel, this.ctx.workspaceStore, this.ctx.openaiBaseUrl),
+          // Per-node attachments pre-resolved above (undefined for text-only nodes).
+          ...(resolvedNodeAttachments[i] ? { resolvedAttachments: resolvedNodeAttachments[i] } : {}),
         };
       });
 

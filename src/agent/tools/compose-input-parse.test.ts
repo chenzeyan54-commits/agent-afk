@@ -147,3 +147,33 @@ describe('parseComposeInput — compose-level fields still work', () => {
     expect(parsed.max_tool_rounds_per_node).toBe(100);
   });
 });
+
+describe('parseComposeInput — per-node attachments', () => {
+  it('accepts a node with no attachments field (backward-compat)', () => {
+    const { parsed } = parseComposeInput(minimal());
+    expect(parsed.nodes[0]!.attachments).toBeUndefined();
+  });
+
+  it('accepts a valid string array of attachments', () => {
+    const { parsed } = parseComposeInput(minimal({ attachments: ['/tmp/img.png', 'img_abc123'] }));
+    expect(parsed.nodes[0]!.attachments).toEqual(['/tmp/img.png', 'img_abc123']);
+  });
+
+  it('rejects non-array attachments', () => {
+    expect(() => parseComposeInput(minimal({ attachments: 'file.png' }))).toThrow(/attachments must be an array/);
+  });
+
+  it('rejects non-string entries', () => {
+    expect(() => parseComposeInput(minimal({ attachments: [123] }))).toThrow(/non-empty strings/);
+  });
+
+  it('rejects empty string entries', () => {
+    expect(() => parseComposeInput(minimal({ attachments: ['  '] }))).toThrow(/non-empty strings/);
+  });
+
+  it('accepts an empty array (no-op)', () => {
+    const { parsed } = parseComposeInput(minimal({ attachments: [] }));
+    // Empty array passes validation; resolution step treats it as no attachments
+    expect(parsed.nodes[0]!.attachments).toEqual([]);
+  });
+});

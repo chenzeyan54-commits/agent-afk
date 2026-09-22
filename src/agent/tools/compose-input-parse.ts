@@ -18,6 +18,8 @@ export interface ComposeNodeInput {
   max_tool_rounds?: number;
   /** Per-node turn budget. Forwarded to the fork config as maxTurns. */
   max_turns?: number;
+  /** Image IDs or absolute file paths to pass to this node. */
+  attachments?: string[];
 }
 
 export interface ComposeInput {
@@ -139,9 +141,23 @@ export function parseComposeInput(input: unknown): ParseResult {
       nodeMaxTurns = val;
     }
 
+    let attachments: string[] | undefined;
+    if (n['attachments'] !== undefined) {
+      if (!Array.isArray(n['attachments'])) {
+        throw new Error(`Node "${id}" attachments must be an array`);
+      }
+      for (const item of n['attachments']) {
+        if (typeof item !== 'string' || item.trim().length === 0) {
+          throw new Error(`Node "${id}" attachments must contain only non-empty strings`);
+        }
+      }
+      attachments = n['attachments'] as string[];
+    }
+
     parsed.push({ id, prompt, model,
       ...(nodeMaxToolRounds !== undefined ? { max_tool_rounds: nodeMaxToolRounds } : {}),
       ...(nodeMaxTurns !== undefined ? { max_turns: nodeMaxTurns } : {}),
+      ...(attachments !== undefined ? { attachments } : {}),
     });
   }
 
