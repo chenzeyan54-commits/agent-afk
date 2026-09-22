@@ -212,6 +212,42 @@ describe('ComposeExecutor', () => {
       }));
       expect(result.isError).toBeFalsy();
     });
+
+    it('rejects non-array readRoots on a node', async () => {
+      const executor = new ComposeExecutor(makeContext());
+      const result = await executor.execute(makeCall({
+        nodes: [{ id: 'a', prompt: 'task', readRoots: '/tmp/data' }],
+      }));
+      expect(result.isError).toBe(true);
+      expect(result.content).toContain('readRoots must be an array of strings');
+    });
+
+    it('rejects readRoots containing non-string entries', async () => {
+      const executor = new ComposeExecutor(makeContext());
+      const result = await executor.execute(makeCall({
+        nodes: [{ id: 'a', prompt: 'task', readRoots: [123] }],
+      }));
+      expect(result.isError).toBe(true);
+      expect(result.content).toContain('readRoots must be an array of strings');
+    });
+
+    it('rejects non-array writeRoots on a node', async () => {
+      const executor = new ComposeExecutor(makeContext());
+      const result = await executor.execute(makeCall({
+        nodes: [{ id: 'a', prompt: 'task', writeRoots: '/tmp/out' }],
+      }));
+      expect(result.isError).toBe(true);
+      expect(result.content).toContain('writeRoots must be an array of strings');
+    });
+
+    it('rejects writeRoots containing non-string entries', async () => {
+      const executor = new ComposeExecutor(makeContext());
+      const result = await executor.execute(makeCall({
+        nodes: [{ id: 'a', prompt: 'task', writeRoots: [true] }],
+      }));
+      expect(result.isError).toBe(true);
+      expect(result.content).toContain('writeRoots must be an array of strings');
+    });
   });
 
   describe('execution', () => {
@@ -1198,6 +1234,41 @@ describe('ComposeExecutor', () => {
       for (const node of dagOpts.nodes) {
         expect(node.maxToolUseIterations).toBe(4);
       }
+    });
+
+    it('threads per-node readRoots into SubagentDAGNode', async () => {
+      mockRunSubagentDAG.mockResolvedValue({ outputs: { a: 'ok' }, failed: [], skipped: [] });
+      const executor = new ComposeExecutor(makeContext());
+
+      await executor.execute(makeCall({
+        nodes: [{ id: 'a', prompt: 'task a', readRoots: ['/tmp/data'] }],
+      }));
+
+      const dagOpts = mockRunSubagentDAG.mock.calls[0][0];
+      expect(dagOpts.nodes[0].readRoots).toEqual(['/tmp/data']);
+    });
+
+    it('threads per-node writeRoots into SubagentDAGNode', async () => {
+      mockRunSubagentDAG.mockResolvedValue({ outputs: { a: 'ok' }, failed: [], skipped: [] });
+      const executor = new ComposeExecutor(makeContext());
+
+      await executor.execute(makeCall({
+        nodes: [{ id: 'a', prompt: 'task a', writeRoots: ['/tmp/out'] }],
+      }));
+
+      const dagOpts = mockRunSubagentDAG.mock.calls[0][0];
+      expect(dagOpts.nodes[0].writeRoots).toEqual(['/tmp/out']);
+    });
+
+    it('omits readRoots/writeRoots from DAG node when not specified (inherit parent scope)', async () => {
+      mockRunSubagentDAG.mockResolvedValue({ outputs: { a: 'ok' }, failed: [], skipped: [] });
+      const executor = new ComposeExecutor(makeContext());
+
+      await executor.execute(makeCall({ nodes: [{ id: 'a', prompt: 'task a' }] }));
+
+      const dagOpts = mockRunSubagentDAG.mock.calls[0][0];
+      expect(dagOpts.nodes[0]).not.toHaveProperty('readRoots');
+      expect(dagOpts.nodes[0]).not.toHaveProperty('writeRoots');
     });
 
     it('omits maxToolUseIterations when no budget is set (node inherits the fork default)', async () => {

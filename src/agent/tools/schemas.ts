@@ -639,6 +639,8 @@ export const composeTool: AnthropicToolDef = {
             id: { type: 'string', description: 'Unique node identifier.' },
             prompt: { type: 'string', description: 'Task prompt for this subagent.' },
             model: { type: 'string', description: 'Model override (default: sonnet).' },
+            readRoots: { type: 'array', items: { type: 'string' }, description: 'Optional extra read roots to pre-grant to this node. Each entry must be an absolute path with no `..` segments (and not a filesystem root or your home dir). Composed WITH (never replaces) the inherited parent read scope. Grandchildren must be re-granted (not inherited).' },
+            writeRoots: { type: 'array', items: { type: 'string' }, description: 'Optional extra write roots to pre-grant to this node. Each entry must be an absolute path with no `..` segments. Composed WITH (never replaces) the child cwd.' },
           },
           required: ['id', 'prompt'],
           additionalProperties: false,
@@ -687,15 +689,7 @@ export const composeTool: AnthropicToolDef = {
       },
       max_tool_calls_per_node: {
         type: 'number',
-        description:
-          'DEPRECATED alias for `max_tool_rounds_per_node` — prefer that ' +
-          'key. Accepted unchanged for back-compat, but the unit is now ' +
-          'tool-use ROUNDS, not individual tool calls, and spending the ' +
-          'budget triggers a graceful wind-down rather than cancelling the ' +
-          'node. Setting both keys uses `max_tool_rounds_per_node` and warns. ' +
-          'Because exhaustion no longer hard-stops the node, this key is no ' +
-          'longer a cost or runtime ceiling — it now only marks where ' +
-          'wind-down begins.',
+        description: 'DEPRECATED alias for `max_tool_rounds_per_node` — prefer that key. Accepted unchanged for back-compat, but the unit is now tool-use ROUNDS, not individual tool calls, and spending the budget triggers a graceful wind-down rather than cancelling the node. Setting both keys uses `max_tool_rounds_per_node` and warns. Because exhaustion no longer hard-stops the node, this key is no longer a cost or runtime ceiling — it now only marks where wind-down begins.',
       },
     },
     required: ['nodes'],
