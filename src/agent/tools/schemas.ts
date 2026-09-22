@@ -641,7 +641,6 @@ export const composeTool: AnthropicToolDef = {
             model: { type: 'string', description: 'Model override (default: sonnet).' },
             max_tool_rounds: { type: 'number', description: 'Per-node tool-round budget (1–1000). Overrides compose-level max_tool_rounds_per_node.' },
             max_turns: { type: 'number', description: 'Per-node turn budget. Positive integer.' },
-            agent_type: { type: 'string', description: 'Named agent type for this node. Forwarded as the agentType label used in progress rendering and trace events. When omitted, the executor derives a label from the node id and position.' },
           }, required: ['id', 'prompt'], additionalProperties: false,
         },
         description: 'Subagent tasks to execute.',
