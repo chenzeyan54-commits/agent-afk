@@ -11,6 +11,33 @@ auto-release workflow to deduplicate commits across successive runs.
 
 ## [Unreleased]
 
+## [5.231.2] - 2026-09-23
+
+### Fixed
+- skip auth prompt when user is already authenticated (#2063) (40cbb530)
+
+## [5.231.1] - 2026-09-23
+
+### Fixed
+- harden expected_hash format validation and add cross-tool test (#2068) (7764c96a)
+
+## [5.231.0] - 2026-09-23
+
+### Fixed
+- rebase + resolve review feedback (2a39a108)
+
+### Changed
+- Merge pull request #2045 from griffinwork40/afk/iso-agent-tool-1-p7v1dt (b72541f3)
+
+## [5.230.11] - 2026-09-23
+
+### Fixed
+- preserve existing MCP config permissions (ef50bf50)
+- use standard 0o644 permissions for MCP config file writes (db182cd9)
+
+### Changed
+- Merge pull request #2054 from griffinwork40/afk/fix-2039 (b0c4ba54)
+
 ## [5.230.10] - 2026-09-23
 
 ### Fixed
