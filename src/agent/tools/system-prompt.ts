@@ -131,15 +131,17 @@ Do NOT store: ephemeral task details, information derivable from code or git, sp
 Save reusable multi-step workflows the user teaches you or that you discover work well. Name in kebab-case. Searchable via memory_search.`;
 
 /**
- * Read-only variant of {@link MEMORY_SYSTEM_PROMPT}. Used by child (subagent /
- * skill) sessions which have access only to `memory_search` — never to
- * `memory_update` or `procedure_write`. Mirrors the "Reading memory" section
- * of the full prompt and omits all write guidance so the model is not
- * instructed to call tools it does not have.
+ * Child-session variant of {@link MEMORY_SYSTEM_PROMPT}. Used by child
+ * (subagent / skill) sessions. Children have `memory_search` AND
+ * `memory_update` (target:"fact" only) — `target:"hot"` writes are blocked
+ * at runtime by the `createChildMemoryHotBlockHook` PreToolUse hook.
+ * `procedure_write` is not available. This variant omits hot-write guidance
+ * and procedure_write so the model is not instructed to call tools or targets
+ * that are blocked.
  */
 export const MEMORY_SYSTEM_PROMPT_READONLY = `# Cross-Session Memory (read-only)
 
-You have one tool for recalling knowledge from prior sessions: memory_search. Writes (memory_update, procedure_write) are not available in this child session — only the parent can persist new memory.
+You have access to memory_search and memory_update (target:"fact" only). Hot memory writes (target:"hot") and procedure_write are not available in this child session — only the parent can write to hot memory or procedures.
 
 ## Reading memory
 On your first turn, decide whether to call memory_search based on the request:
@@ -148,7 +150,10 @@ On your first turn, decide whether to call memory_search based on the request:
 - If hot memory (shown in <cross-session-memory> tags above) already covers the relevant context, skip the search.
 - Search at most once per session for general context. Search again only if new information surfaces a specific topic worth querying.
 
-Use FTS5 syntax: "exact phrase", term1 AND term2, prefix*.`;
+Use FTS5 syntax: "exact phrase", term1 AND term2, prefix*.
+
+## Persisting facts (memory_update, target:"fact" only)
+Store findings when you encounter non-obvious facts worth persisting: project conventions, key decisions, surprising learnings. Use target:"fact" — it goes to the searchable SQLite archive. Do NOT use target:"hot" (blocked in child sessions).`;
 
 /**
  * Resolve the tool-usage system prompt for a session — the single source of

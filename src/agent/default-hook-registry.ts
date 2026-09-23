@@ -11,7 +11,7 @@ import { createShadowVerifyNudge } from './shadow-verify-nudge.js';
 import { createAskQuestionGate } from './ask-question-gate.js';
 import { createSafeDestructDetect } from './safe-destruct-detect.js';
 import { createReleaseBoundaryDetect } from './release-boundary-detect.js';
-import { MemoryStore, createMemorySessionEndHook } from './memory/index.js';
+import { MemoryStore, createMemorySessionEndHook, createChildMemoryHotBlockHook } from './memory/index.js';
 import { createPlanModeGate } from './plan-mode-gate.js';
 import { createAfkModeGate } from './afk-mode-gate.js';
 import { cleanupComposeSpills } from './tools/compose-executor.js';
@@ -107,6 +107,11 @@ export function createDefaultHookRegistry(
   // router park-and-decline after the round-trip. No-op on REPL/Telegram
   // (handler installed; probed at call time). See ask-question-gate.ts.
   registry.register('PreToolUse', createAskQuestionGate());
+  // Child memory hot-write block: sub-agents may call memory_update with
+  // target:"fact" (safe — fact archive only) but are blocked from target:"hot"
+  // (would rewrite HOT.md, injected into every future session's system prompt).
+  // The hook is a no-op for top-level sessions (no parentSessionId).
+  registry.register('PreToolUse', createChildMemoryHotBlockHook());
   // Safe-destruct detector (two-tier, ALL surfaces): OBSERVE-tier records
   // destructive bash commands (rm -rf, git branch -D, etc.) via `approve`
   // catch-records without blocking; BLOCK-tier hard-blocks irrecoverable
