@@ -250,6 +250,7 @@ export function createWebScrapeHandler(opts: WebScrapeOptions = {}): ToolHandler
           return {
             content: `web_scrape network error: ${errorMessage(err)}`,
             isError: true,
+            failureClass: 'network-error',
           };
         }
         if (!res.ok) {
@@ -306,11 +307,21 @@ export function createWebScrapeHandler(opts: WebScrapeOptions = {}): ToolHandler
           // here for the cases the launcher never sees — chiefly a missing
           // `playwright` package, which fails at dynamic-import time before
           // any launch. Appending unconditionally double-prints the command.
+          const playwrightMissing = isPlaywrightMissing(err);
           const hint =
-            isPlaywrightMissing(err) && !hasPlaywrightInstallHint(base)
+            playwrightMissing && !hasPlaywrightInstallHint(base)
               ? ` (the render fallback needs the optional Playwright browser — run \`${playwrightInstallCommand()}\`)`
               : '';
-          return { content: `web_scrape markdown error: ${base}${hint}`, isError: true };
+          // Network-level failures (fetch() threw — DNS, TCP, TLS, etc.) are
+          // environment/connectivity problems, not tool bugs. Tag them so the
+          // detector can apply a lower severity cap. Browser/Playwright errors
+          // are left unclassified because they may warrant a distinct card.
+          const failureClass = playwrightMissing ? undefined : 'network-error' as const;
+          return {
+            content: `web_scrape markdown error: ${base}${hint}`,
+            isError: true,
+            ...(failureClass !== undefined ? { failureClass } : {}),
+          };
         }
       }
 
@@ -335,6 +346,7 @@ export function createWebScrapeHandler(opts: WebScrapeOptions = {}): ToolHandler
         return {
           content: `web_scrape search error (${backend.name}): ${errorMessage(err)}`,
           isError: true,
+          failureClass: 'network-error',
         };
       }
     } finally {

@@ -50,6 +50,13 @@
  *     are surfaced in the card detail so a reviewer can see the mix.
  *   - `timeout` is classified but NOT excluded — a high timeout rate can be a
  *     real signal — so it still counts toward the rate, just visibly.
+ *   - `network-error` is NOT excluded either. It counts toward the failure
+ *     rate so the model and operator can see that web requests are consistently
+ *     failing. However, when ALL counted failures carry `network-error`, the
+ *     card's severity is capped at `medium` instead of potentially `high` — a
+ *     100% network-error rate is an ENVIRONMENT signal (no internet, proxy
+ *     misconfigured, Playwright unavailable), not evidence the tool itself is
+ *     broken. See `severityFor` / `isAllNetworkErrors` below. (#1917)
  *   - Tools that return `isError: true` as an unclassified *signal* to the LLM
  *     (e.g. intentional "no results" responses) will still inflate the rate.
  *     Reviewers can suppress via card status: 'deferred'.
@@ -77,7 +84,10 @@ import { BENIGN_FAILURE_CLASSES } from '../../../agent/trace/types.js';
  * Results in this set are excluded from BOTH the failure count and the call
  * total. `timeout` is deliberately NOT excluded — a high timeout rate can be a
  * real problem (too-tight a deadline, a systematically slow target) — but it IS
- * surfaced in the per-class breakdown so a reviewer can judge.
+ * surfaced in the per-class breakdown so a reviewer can judge. `network-error`
+ * is also NOT excluded: it still counts (the operator needs to see repeated
+ * fetch failures) but its severity contribution is capped at `medium` by the
+ * `severityFor` ladder (see that function's JSDoc).
  *
  * Back-compat: traces written before the `failureClass` field existed carry no
  * class, so historical failures are never excluded — they count exactly as they
@@ -248,7 +258,7 @@ function buildResult(stats: ToolStats, rate: number): DetectorResult {
     slug,
     title: buildTitle(stats.toolName, stats.failures.length, stats.totalCalls, rate),
     pattern: 'tool-failure-density',
-    severity: severityFor(stats.failures.length, rate),
+    severity: severityFor(stats.failures.length, rate, stats.failures),
     observedAt,
     evidence,
     detail: {
@@ -276,13 +286,41 @@ function buildResult(stats: ToolStats, rate: number): DetectorResult {
  *   - ≥25% rate → medium, escalates to high at ≥10 failures.
  *   - <25% rate (only reachable when caller lowered the threshold) → low.
  *
+ * **`network-error` cap:** when ALL counted failures carry `failureClass:
+ * 'network-error'`, the card is capped at `medium` regardless of rate or
+ * count — a 100% `network-error` rate is an environment/connectivity signal
+ * (no internet, proxy mis-configured, Playwright unavailable), NOT evidence
+ * the tool itself is broken. The cap is lifted the moment even one failure
+ * is unclassified or carries a different class, so a genuine handler bug
+ * coinciding with network failures still produces the expected high card.
+ * (#1917)
+ *
  * The ladder is conservative; reviewers can override via triage notes.
  */
-function severityFor(failureCount: number, rate: number): Severity {
+function severityFor(
+  failureCount: number,
+  rate: number,
+  failures: readonly FailureSighting[],
+): Severity {
+  // Cap: all-network-error runs are environment signals, not tool bugs.
+  if (isAllNetworkErrors(failures)) {
+    const baseline = rate >= 0.25 ? 'medium' : 'low';
+    return baseline;
+  }
   if (rate >= 1.0) return 'high';
   if (rate >= 0.5) return 'high';
   if (rate >= 0.25) return failureCount >= 10 ? 'high' : 'medium';
   return failureCount >= 10 ? 'medium' : 'low';
+}
+
+/**
+ * Returns `true` when every sighting in the set carries
+ * `failureClass: 'network-error'`. An empty array returns `false` —
+ * an empty set of failures is not an all-network-error scenario.
+ */
+function isAllNetworkErrors(failures: readonly FailureSighting[]): boolean {
+  if (failures.length === 0) return false;
+  return failures.every((f) => f.failureClass === 'network-error');
 }
 
 function buildTitle(

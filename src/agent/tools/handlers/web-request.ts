@@ -299,9 +299,15 @@ export function createWebRequestHandler(opts: WebRequestHandlerOptions = {}): To
         if (err instanceof EgressBlockedError) {
           return { content: `web_request blocked: ${err.message}`, isError: true };
         }
-        const name = err instanceof Error && err.name === 'DomainPolicyError' ? 'blocked' : 'network error';
+        if (err instanceof Error && err.name === 'DomainPolicyError') {
+          return { content: `web_request blocked: ${errorMessage(err)}`, isError: true };
+        }
         const msg = errorMessage(err);
-        return { content: `web_request ${name}: ${msg}`, isError: true };
+        return {
+          content: `web_request network error: ${msg}`,
+          isError: true,
+          failureClass: 'network-error',
+        };
       }
 
       if (ac.signal.aborted) {

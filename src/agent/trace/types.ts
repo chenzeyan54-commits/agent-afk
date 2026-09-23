@@ -100,6 +100,18 @@ export const TOOL_FAILURE_CLASSES = [
   'repeat-failure',
   /** The target the tool was asked to operate on does not exist (#75 follow-up). */
   'no-such-target',
+  /**
+   * Node `fetch()` died on a public URL — DNS failure, TCP refused/reset,
+   * TLS error, or similar OS-level connectivity problem.  Distinct from a
+   * deliberate SSRF guard block (`EgressBlockedError`) or a domain-policy
+   * refusal, which both carry `policy-refusal`.  A high rate of
+   * `network-error` results is an ENVIRONMENT signal (no internet, proxy
+   * misconfigured, Playwright unavailable) rather than evidence the tool
+   * itself is broken; the `tool-failure-density` detector therefore caps its
+   * contribution to `medium` severity instead of escalating to `high`.
+   * (#1917)
+   */
+  'network-error',
 ] as const;
 
 /**
@@ -139,11 +151,22 @@ export const TOOL_FAILURE_CLASSES = [
  *                              see `_rg-exit2.ts`). The caller supplied a bad reference —
  *                              not a tool fault — so the fix is to correct the target,
  *                              not to retry the same call.
+ *   - `network-error`        — Node `fetch()` died on a public URL (DNS failure, TCP
+ *                              refused/reset, TLS error, or similar OS-level connectivity
+ *                              problem). Set by `web_request` and `web_scrape` handlers
+ *                              when the underlying `fetch()` call throws without hitting
+ *                              the SSRF guard or domain-policy enforcer (those produce
+ *                              `policy-refusal` instead). A high rate of `network-error`
+ *                              results signals an environment problem (no internet, proxy
+ *                              misconfigured, Playwright unavailable) rather than a tool
+ *                              bug. The detector caps its severity contribution to
+ *                              `medium`. NOT in `BENIGN_FAILURE_CLASSES` — it still
+ *                              counts, just at a lower alarm level. (#1917)
  *
  * The `tool-failure-density` detector treats `policy-refusal`, `permission-denied`,
  * `hook-block`, `abort`, `elicitation-declined`, and `no-such-target` as "the system
  * correctly said no" — excluded from failure stats entirely — while `timeout`, `budget`,
- * `denial-breaker`, and unclassified failures still count. That split is
+ * `denial-breaker`, `network-error`, and unclassified failures still count. That split is
  * `BENIGN_FAILURE_CLASSES` below.
  */
 export type ToolFailureClass = (typeof TOOL_FAILURE_CLASSES)[number];
@@ -171,9 +194,13 @@ export type ToolFailureClass = (typeof TOOL_FAILURE_CLASSES)[number];
  * torn down for spinning is review-worthy — see the per-class notes above.
  * `no-such-target` IS included: a nonexistent path is a caller-supplied bad
  * reference (a typo, stale memory of a moved file, ordinary exploration), not
- * evidence the tool is broken. An unclassified failure (no `failureClass`) is
- * never benign: pre-classification traces and genuine handler bugs share that
- * shape, so it must stay alarming.
+ * evidence the tool is broken. `network-error` is deliberately NOT included
+ * even though it is an environment problem rather than a tool bug: it still
+ * counts in failure stats (the model needs to see that web requests are
+ * consistently failing) but the `tool-failure-density` detector caps its
+ * severity contribution to `medium` rather than escalating to `high` (#1917).
+ * An unclassified failure (no `failureClass`) is never benign: pre-classification
+ * traces and genuine handler bugs share that shape, so it must stay alarming.
  */
 export const BENIGN_FAILURE_CLASSES: ReadonlySet<ToolFailureClass> = new Set([
   'policy-refusal',

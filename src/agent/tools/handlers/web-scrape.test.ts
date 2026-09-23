@@ -596,3 +596,50 @@ describe('web_scrape handler — SSRF egress guard (issue #575)', () => {
     expect(lookupFn).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// network-error failureClass (#1917)
+// ---------------------------------------------------------------------------
+
+describe('web_scrape handler — network-error failureClass (#1917)', () => {
+  it('raw mode: stamps failureClass: network-error when fetch() throws', async () => {
+    const fetchFn = makeFetch(() => {
+      throw new TypeError('fetch failed');
+    });
+    const handler = createWebScrapeHandler({ fetchFn, env: {}, lookupFn: publicLookup });
+    const r = await handler({ mode: 'raw', url: 'https://example.com' }, signal());
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain('network error');
+    expect(r.failureClass).toBe('network-error');
+  });
+
+  it('raw mode: SSRF block does NOT stamp network-error (no failureClass)', async () => {
+    // A blocked loopback URL should not carry network-error — it's a policy refusal.
+    const fetchFn = makeFetch(() => makeResponse({ body: 'should not be reached' }));
+    const handler = createWebScrapeHandler({ fetchFn, env: {} });
+    const r = await handler({ mode: 'raw', url: 'http://127.0.0.1/secret' }, signal());
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain('blocked');
+    expect(r.failureClass).toBeUndefined();
+  });
+
+  it('search mode: stamps failureClass: network-error when the backend fetch() throws', async () => {
+    const fetchFn = vi.fn().mockRejectedValue(new TypeError('fetch failed')) as unknown as FetchFn;
+    const handler = createWebScrapeHandler({
+      fetchFn,
+      env: { EXA_API_KEY: 'k' },
+      lookupFn: publicLookup,
+    });
+    const r = await handler({ mode: 'search', query: 'test query' }, signal());
+    expect(r.isError).toBe(true);
+    expect(r.failureClass).toBe('network-error');
+  });
+
+  it('raw mode: successful fetch does NOT stamp failureClass', async () => {
+    const fetchFn = makeFetch(() => makeResponse({ body: 'ok' }));
+    const handler = createWebScrapeHandler({ fetchFn, env: {}, lookupFn: publicLookup });
+    const r = await handler({ mode: 'raw', url: 'https://example.com' }, signal());
+    expect(r.isError).toBeUndefined();
+    expect(r.failureClass).toBeUndefined();
+  });
+});

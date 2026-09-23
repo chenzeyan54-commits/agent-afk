@@ -393,3 +393,39 @@ describe('web_request handler — clamping', () => {
     expect(r.isError).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// network-error failureClass (#1917)
+// ---------------------------------------------------------------------------
+
+describe('web_request handler — network-error failureClass (#1917)', () => {
+  it('stamps failureClass: network-error when fetch() throws a network error', async () => {
+    // Simulate Node fetch() dying on the network (DNS failure, TCP refused, etc.)
+    const fetchFn = vi.fn().mockRejectedValue(new TypeError('fetch failed')) as unknown as typeof fetch;
+    const handler = createWebRequestHandler({ fetchFn, lookupFn: publicLookup });
+    const r = await handler({ url: 'https://example.com/', method: 'GET' }, signal());
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain('network error');
+    expect(r.failureClass).toBe('network-error');
+  });
+
+  it('does NOT stamp network-error on a domain policy block (still just isError)', async () => {
+    // A DomainPolicyError should produce 'blocked', not 'network-error'.
+    const domainPolicyError = new Error('domain blocked');
+    domainPolicyError.name = 'DomainPolicyError';
+    const fetchFn = vi.fn().mockRejectedValue(domainPolicyError) as unknown as typeof fetch;
+    const handler = createWebRequestHandler({ fetchFn, lookupFn: publicLookup });
+    const r = await handler({ url: 'https://blocked.example.com/', method: 'GET' }, signal());
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain('blocked');
+    expect(r.failureClass).toBeUndefined();
+  });
+
+  it('does NOT stamp network-error on a successful response', async () => {
+    const fetchFn = makeFetch(() => makeResponse({ body: 'ok' }));
+    const handler = createWebRequestHandler({ fetchFn, lookupFn: publicLookup });
+    const r = await handler({ url: 'https://example.com/', method: 'GET' }, signal());
+    expect(r.isError).toBeUndefined();
+    expect(r.failureClass).toBeUndefined();
+  });
+});

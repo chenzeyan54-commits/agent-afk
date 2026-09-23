@@ -570,3 +570,110 @@ describe('detectToolFailureDensity — failureClass exclusion', () => {
     expect(r.evidence[0]?.annotation).toContain('class=timeout');
   });
 });
+
+describe('detectToolFailureDensity — network-error severity cap (#1917)', () => {
+  it('100% network-error rate is capped at medium (not high)', () => {
+    resetSeq();
+    // 13/13 = 100% network-error: mirrors the web_request card from the issue.
+    // Without the cap this would be high; with it, must be medium.
+    const lines: string[] = [];
+    for (let i = 0; i < 13; i++) {
+      lines.push(
+        ...toolPair(`n-${i}`, 'web_request', { isError: true, failureClass: 'network-error' }),
+      );
+    }
+    const r = detectToolFailureDensity([makeSession('s1', lines)])[0]!;
+    expect(r.severity).toBe('medium');
+    expect(r.detail['failureCount']).toBe(13);
+    expect(r.detail['failureClassBreakdown']).toEqual({ 'network-error': 13 });
+  });
+
+  it('≥25% network-error rate is medium (not low)', () => {
+    resetSeq();
+    // 3 network-error / 10 calls = 30%: above 25% threshold → medium (not low).
+    const lines: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      lines.push(
+        ...toolPair(`n-${i}`, 'web_scrape', { isError: true, failureClass: 'network-error' }),
+      );
+    }
+    for (let i = 0; i < 7; i++) lines.push(...toolPair(`ok-${i}`, 'web_scrape'));
+    const r = detectToolFailureDensity([makeSession('s1', lines)])[0]!;
+    expect(r.severity).toBe('medium');
+  });
+
+  it('<25% network-error rate is low (below 25% branch)', () => {
+    resetSeq();
+    // 3 network-error / 20 = 15%: below 25% threshold → low when using
+    // a lower minFailureRate so it fires. Non-network would be low anyway.
+    const lines: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      lines.push(
+        ...toolPair(`n-${i}`, 'web_scrape', { isError: true, failureClass: 'network-error' }),
+      );
+    }
+    for (let i = 0; i < 17; i++) lines.push(...toolPair(`ok-${i}`, 'web_scrape'));
+    const r = detectToolFailureDensity([makeSession('s1', lines)], { minFailureRate: 0.1 })[0]!;
+    expect(r.severity).toBe('low');
+  });
+
+  it('regression: web_request 100% network-error no longer produces a high-severity card', () => {
+    resetSeq();
+    // The real-world shape from issue #1917: 13/13 failing with
+    // "web_request network error: fetch failed". Pre-fix → high severity.
+    // Post-fix → medium severity (capped).
+    const lines: string[] = [];
+    for (let i = 0; i < 13; i++) {
+      lines.push(
+        ...toolPair(`r-${i}`, 'web_request', { isError: true, failureClass: 'network-error' }),
+      );
+    }
+    const r = detectToolFailureDensity([makeSession('s1', lines)])[0]!;
+    expect(r.severity).not.toBe('high');
+    expect(r.severity).toBe('medium');
+  });
+
+  it('mixed network-error + unclassified failures still escalates to high at 100% rate', () => {
+    resetSeq();
+    // 10 network-error + 3 unclassified = 13 failures / 13 calls = 100%.
+    // The cap does NOT apply (not ALL failures are network-error), so → high.
+    const lines: string[] = [];
+    for (let i = 0; i < 10; i++) {
+      lines.push(
+        ...toolPair(`n-${i}`, 'web_request', { isError: true, failureClass: 'network-error' }),
+      );
+    }
+    for (let i = 0; i < 3; i++) {
+      lines.push(...toolPair(`u-${i}`, 'web_request', { isError: true }));
+    }
+    const r = detectToolFailureDensity([makeSession('s1', lines)])[0]!;
+    expect(r.severity).toBe('high');
+  });
+
+  it('network-error failures still count and appear in failureClassBreakdown', () => {
+    resetSeq();
+    const lines: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      lines.push(
+        ...toolPair(`n-${i}`, 'web_scrape', { isError: true, failureClass: 'network-error' }),
+      );
+    }
+    const r = detectToolFailureDensity([makeSession('s1', lines)])[0]!;
+    expect(r.detail['failureCount']).toBe(5);
+    expect(r.detail['totalCalls']).toBe(5);
+    expect(r.detail['failureClassBreakdown']).toEqual({ 'network-error': 5 });
+    // network-error is NOT excluded — it must not appear in excludedByClass.
+    expect(r.detail['excludedByClass']).toEqual({});
+  });
+
+  it('network-error annotates evidence rows with class=network-error', () => {
+    resetSeq();
+    const lines = [
+      ...toolPair('n1', 'web_request', { isError: true, failureClass: 'network-error' }),
+      ...toolPair('n2', 'web_request', { isError: true, failureClass: 'network-error' }),
+      ...toolPair('n3', 'web_request', { isError: true, failureClass: 'network-error' }),
+    ];
+    const r = detectToolFailureDensity([makeSession('s1', lines)])[0]!;
+    expect(r.evidence[0]?.annotation).toContain('class=network-error');
+  });
+});
