@@ -74,6 +74,8 @@ export const MODEL_PRICING: ReadonlyMap<string, ModelPricing> = new Map<string, 
   ['claude-sonnet-5', { inputPerMTok: 3.0, outputPerMTok: 15.0, cacheWrite5mPerMTok: 3.75, cacheWrite1hPerMTok: 6.0, cacheReadPerMTok: 0.30 }],
   // Claude Opus 5 (GA 2026-07-24): $5 / $25 per MTok.
   ['claude-opus-5', { inputPerMTok: 5.0, outputPerMTok: 25.0, cacheWrite5mPerMTok: 6.25, cacheWrite1hPerMTok: 10.0, cacheReadPerMTok: 0.50 }],
+  // Claude Opus 5.5 (released 2026-09-22): same $5 / $25 rates as Opus 5.
+  ['claude-opus-5-5', { inputPerMTok: 5.0, outputPerMTok: 25.0, cacheWrite5mPerMTok: 6.25, cacheWrite1hPerMTok: 10.0, cacheReadPerMTok: 0.50 }],
   // Opus 4.6/4.7/4.8 share Opus 5's $5 / $25 rates.
   ['claude-opus-4-8', { inputPerMTok: 5.0, outputPerMTok: 25.0, cacheWrite5mPerMTok: 6.25, cacheWrite1hPerMTok: 10.0, cacheReadPerMTok: 0.50 }],
   ['claude-opus-4-7', { inputPerMTok: 5.0, outputPerMTok: 25.0, cacheWrite5mPerMTok: 6.25, cacheWrite1hPerMTok: 10.0, cacheReadPerMTok: 0.50 }],
@@ -160,7 +162,7 @@ const FAST_TIER_MULTIPLIER = 2;
  * falls through to its standard rates rather than being billed 2× for a tier
  * it was never served on.
  */
-const FAST_ELIGIBLE_MODEL = /^claude-opus-(?:5|4-8)(?:-|$)/;
+const FAST_ELIGIBLE_MODEL = /^claude-opus-(?:5(?:-5)?|4-8)(?:-|$)/;
 
 /** Scale every rate on a resolved row by the Fast-tier multiplier. */
 function toFastTierRates(pricing: ModelPricing): ModelPricing {
