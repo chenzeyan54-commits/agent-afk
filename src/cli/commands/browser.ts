@@ -125,9 +125,14 @@ export function readMcpConfigFile(path: string): McpConfigFile {
 /**
  * Atomically persist mcp.json (temp-file + POSIX rename) so a crash mid-write
  * never leaves a truncated config. Mirrors the pattern in schedule-store.ts.
+ *
+ * Uses 0o644 (not 0o600) because mcp.json is a non-secret config file that
+ * external tools (e.g. Claude Code, other MCP clients) may need to read under
+ * a different user account. The previous implicit default before PR #2027 was
+ * 0o666 & ~umask (typically 0o644). See GitHub issue #2039.
  */
 export function writeMcpConfigFileAtomic(path: string, cfg: McpConfigFile): void {
-  atomicWriteFile(path, `${JSON.stringify(cfg, null, 2)}\n`, { mode: 0o600 });
+  atomicWriteFile(path, `${JSON.stringify(cfg, null, 2)}\n`, { mode: 0o644 });
 }
 
 /**
