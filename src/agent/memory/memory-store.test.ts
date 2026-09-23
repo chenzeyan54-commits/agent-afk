@@ -601,3 +601,172 @@ describe('schema migration — sessions.actor (v2 → v3)', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// searchFacts — access tracking (#1848)
+// ---------------------------------------------------------------------------
+
+describe('searchFacts — access tracking', () => {
+  it('increments access_count and sets last_accessed for every returned fact', () => {
+    const id = store.storeFact({
+      category: 'preference',
+      content: 'user prefers dark mode in editor settings',
+      source_surface: 'test',
+    });
+
+    // Initial state: access_count = 0, last_accessed = NULL.
+    const before = store.getFact(id)!;
+    expect(before.access_count).toBe(0);
+    expect(before.last_accessed).toBeNull();
+
+    const beforeSearch = Date.now();
+    const results = store.searchFacts('dark mode editor');
+    expect(results.some((f) => f.id === id)).toBe(true);
+
+    // After the search the DB row must reflect one access.
+    const after = store.getFact(id)!;
+    expect(after.access_count).toBe(1);
+    expect(after.last_accessed).not.toBeNull();
+    expect(new Date(after.last_accessed!).getTime()).toBeGreaterThanOrEqual(beforeSearch);
+  });
+
+  it('increments access_count on each successive search', () => {
+    const id = store.storeFact({
+      category: 'convention',
+      content: 'repository uses pnpm as the package manager',
+      source_surface: 'test',
+    });
+
+    store.searchFacts('pnpm package manager');
+    store.searchFacts('pnpm package manager');
+    store.searchFacts('pnpm package manager');
+
+    const fact = store.getFact(id)!;
+    expect(fact.access_count).toBe(3);
+  });
+
+  it('does not touch access_count on facts not included in results', () => {
+    const idA = store.storeFact({
+      category: 'preference',
+      content: 'user prefers vim keybindings',
+      source_surface: 'test',
+    });
+    const idB = store.storeFact({
+      category: 'preference',
+      content: 'entirely unrelated fact about something else',
+      source_surface: 'test',
+    });
+
+    store.searchFacts('vim keybindings');
+
+    const factA = store.getFact(idA)!;
+    const factB = store.getFact(idB)!;
+    expect(factA.access_count).toBe(1);
+    // idB was not in the result set; its access_count must remain 0.
+    expect(factB.access_count).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sweepStaleUnaccessed — garbage collection (#1848)
+// ---------------------------------------------------------------------------
+
+describe('sweepStaleUnaccessed — GC sweep', () => {
+  it('soft-deletes facts with access_count = 0 older than ageDays and returns the count', () => {
+    // Use a separate MemoryStore instance in its own dir. After storing the
+    // fact we CLOSE the store (which flushes the SQLite WAL checkpoint) then
+    // immediately open a SECOND MemoryStore on the same dir to consume and
+    // delete the write-ahead log before doing the raw SQL backdate. That way
+    // there is no stale WAL to re-insert the fact with the original timestamp
+    // when we open the final store for the sweep assertion.
+    const localDir = join(
+      tmpdir(),
+      `afk-sweep-stale-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(localDir, { recursive: true });
+    const localStore = new MemoryStore(localDir);
+    const freshId = localStore.storeFact({
+      category: 'learning',
+      content: 'stale fact about an old feature',
+      source_surface: 'test',
+    });
+    localStore.close();
+
+    // Open and close a second store to flush the WAL (replayWAL removes the
+    // jsonl file on open, making the backdated created_at stable across
+    // the third open below).
+    new MemoryStore(localDir).close();
+
+    const fortyDaysAgo = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+    const raw = new Database(join(localDir, 'memory.db'));
+    raw.prepare('UPDATE facts SET created_at = ? WHERE id = ?').run(fortyDaysAgo, freshId);
+    raw.close();
+
+    const reopened = new MemoryStore(localDir);
+    try {
+      const swept = reopened.sweepStaleUnaccessed(30);
+      expect(swept).toBe(1);
+
+      // The swept fact must be permanently removed from the archive.
+      const row = reopened.getFact(freshId);
+      expect(row).toBeNull();
+    } finally {
+      reopened.close();
+      if (existsSync(localDir)) rmSync(localDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not sweep facts that have been accessed', () => {
+    const localDir = join(
+      tmpdir(),
+      `afk-sweep-accessed-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(localDir, { recursive: true });
+    const localStore = new MemoryStore(localDir);
+    const id = localStore.storeFact({
+      category: 'preference',
+      content: 'user prefers concise commit messages for sweep test',
+      source_surface: 'test',
+    });
+    localStore.close();
+
+    // Consume and delete the WAL before the raw SQL update (same reason as
+    // the "soft-deletes" test above).
+    new MemoryStore(localDir).close();
+
+    const fortyDaysAgo = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+    const raw = new Database(join(localDir, 'memory.db'));
+    raw
+      .prepare(
+        'UPDATE facts SET created_at = ?, access_count = 1, last_accessed = ? WHERE id = ?',
+      )
+      .run(fortyDaysAgo, new Date().toISOString(), id);
+    raw.close();
+
+    const reopened = new MemoryStore(localDir);
+    try {
+      const swept = reopened.sweepStaleUnaccessed(30);
+      expect(swept).toBe(0);
+
+      const row = reopened.getFact(id)!;
+      expect(row.superseded_by).toBeNull();
+    } finally {
+      reopened.close();
+      if (existsSync(localDir)) rmSync(localDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not sweep facts younger than ageDays', () => {
+    store.storeFact({
+      category: 'learning',
+      content: 'recent fact that should not be swept',
+      source_surface: 'test',
+    });
+
+    expect(store.sweepStaleUnaccessed(30)).toBe(0);
+  });
+
+  it('returns 0 when no facts exist', () => {
+    expect(store.sweepStaleUnaccessed(30)).toBe(0);
+  });
+});

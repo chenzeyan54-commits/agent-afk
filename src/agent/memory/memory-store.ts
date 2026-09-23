@@ -573,7 +573,63 @@ export class MemoryStore {
     params.push(limit);
 
     const rows = this.db.prepare(sql).all(...params) as (Fact & { rank: number })[];
+
+    // Activate access tracking: increment access_count and set last_accessed on
+    // every fact returned by a search. Runs as a single bulk UPDATE so the
+    // round-trip cost is O(1) rather than O(n). Wrapped in a try/catch so a
+    // transient write failure never surfaces to the caller — read degrading
+    // gracefully is always preferable to throwing here.
+    if (rows.length > 0) {
+      const now = new Date().toISOString();
+      const ids = rows.map((r) => r.id);
+      const placeholders = ids.map(() => '?').join(', ');
+      try {
+        this.db
+          .prepare(
+            `UPDATE facts
+               SET access_count = access_count + 1,
+                   last_accessed = ?
+             WHERE id IN (${placeholders})`,
+          )
+          .run(now, ...ids);
+      } catch (err) {
+        debugLog('memory-store: access tracking update failed (non-fatal):', String(err));
+      }
+    }
+
     return rows;
+  }
+
+  /**
+   * Garbage-collect facts that have never been accessed since creation and are
+   * older than `ageDays` days (default 30). These are low-signal entries that
+   * accumulated without ever being recalled, so deleting them reclaims storage
+   * without removing actively-used facts.
+   *
+   * Only rows with `access_count = 0` AND `created_at` older than the cutoff
+   * AND `superseded_by IS NULL` (still active) are removed. The DELETE fires
+   * the `facts_ad` trigger which keeps the FTS5 index consistent. The return
+   * value is the number of rows removed.
+   *
+   * Wrapped in a try/catch so a transient write failure does not surface to
+   * the caller.
+   */
+  sweepStaleUnaccessed(ageDays: number = 30): number {
+    const cutoff = new Date(Date.now() - ageDays * 24 * 60 * 60 * 1000).toISOString();
+    try {
+      const result = this.db
+        .prepare(
+          `DELETE FROM facts
+           WHERE access_count = 0
+             AND created_at < ?
+             AND superseded_by IS NULL`,
+        )
+        .run(cutoff);
+      return result.changes;
+    } catch (err) {
+      debugLog('memory-store: sweepStaleUnaccessed failed (non-fatal):', String(err));
+      return 0;
+    }
   }
 
   // ── Sessions ────────────────────────────────────────────────
