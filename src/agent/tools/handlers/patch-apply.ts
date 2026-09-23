@@ -189,8 +189,17 @@ export function createPatchApplyHandler(cwd?: string): ToolHandler {
     // Surface a clear instruction in the result so the agent re-reads before
     // any further edits.
     const modifiedPaths = applyResult.files_changed.map((f) => f.path);
+    // Emit _reread_warning whenever files were physically written to disk so
+    // the agent knows its in-context copy is stale. This covers:
+    //   - 'applied'         — all writes succeeded; agent should re-read before edit_file.
+    //   - 'partial_failure' — some files were written before a rename-phase error and
+    //                         the best-effort rollback may not have fully restored them;
+    //                         isError:true on this path makes agent continuation unlikely,
+    //                         but we emit the warning anyway so any continuation is safe.
     const rereadWarning =
-      applyResult.status === 'applied' && modifiedPaths.length > 0
+      (applyResult.status === 'applied' ||
+        (applyResult.status === 'partial_failure' && modifiedPaths.length > 0)) &&
+      modifiedPaths.length > 0
         ? `IMPORTANT: ${modifiedPaths.length} file(s) were written to disk. Your in-context copy of ${modifiedPaths.length === 1 ? 'this file is' : 'these files are'} now stale. You MUST call read_file on each modified path before any subsequent edit_file call — otherwise edit_file may match against pre-patch content and silently revert these changes. Modified paths: ${modifiedPaths.join(', ')}`
         : undefined;
 

@@ -138,6 +138,10 @@ export function resolveMaxTokens(config: AgentConfig, model: string): number {
  * into a resumed session. The allowlist check is the last defence before the
  * API call and must stay conservative.
  */
+// Keep in sync with ContentBlockParam union from @anthropic-ai/sdk.
+// When the SDK adds new discriminants, add them here -- unknown types
+// are silently filtered on resume (safe-fail, not safe-pass).
+// See: .sdk-dependency.lock.json for SDK import tracking.
 const ALLOWED_CONTENT_BLOCK_TYPES = new Set<string>([
   'text',
   'image',
@@ -196,6 +200,13 @@ export function filterContentBlocks(raw: unknown[] | undefined): ContentBlockPar
  * blocks; returns `false` otherwise.
  *
  * Exported for unit testing.
+ *
+ * **Staging note (INV-048):** This function is intentionally exported but has
+ * no production caller yet — it is staged for the orphan-repair path. When
+ * wiring it into orphan-repair callers, pass **only** `nextUserBlocks` (the
+ * turn immediately following the assistant turn). The function signature
+ * enforces this, but callers must not re-introduce a dual-search by accident
+ * (i.e., do not also pass or search `currentUserBlocks`).
  */
 export function hasValidToolUsePairing(
   assistantBlocks: ContentBlockParam[],

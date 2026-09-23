@@ -5,6 +5,10 @@
       "default as Anthropic": {
         "kind": "runtime",
         "reason": "Anthropic SDK client constructor — the singular entry point used to instantiate the client that backs every messages.create() call in src/agent/providers/anthropic-direct/. Removing this import would require swapping the provider implementation entirely."
+      },
+      "ContentBlockParam": {
+        "kind": "type",
+        "reason": "Discriminant union type whose string literals are mirrored in ALLOWED_CONTENT_BLOCK_TYPES (resolve-params.ts). When the SDK adds a new ContentBlockParam variant, that literal must be added to the set or the new block type will be silently dropped on session resume. Tracked here so pnpm audit:sdk:check surfaces the drift at bump time."
       }
     }
   }
