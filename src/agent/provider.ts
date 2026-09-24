@@ -560,9 +560,24 @@ export interface ProviderAgentInfo {
 /** Loose structural shape for context-usage reporting. */
 export interface ProviderContextUsage {
   tools?: unknown[];
-  agents?: unknown[];
+  agents?: { name: string; tokens: number }[];
   isAutoCompactEnabled?: boolean;
-  apiUsage?: Record<string, unknown> | null;
+  totalTokens?: number;
+  maxTokens?: number;
+  percentage?: number;
+  autoCompactThreshold?: number;
+  categories?: { name: string; tokens: number; color: string; isDeferred?: boolean }[];
+  systemTools?: { name: string; tokens: number }[];
+  mcpTools?: { name: string; serverName: string; tokens: number; isLoaded?: boolean }[];
+  skills?: { includedSkills: number; totalSkills: number; tokens: number };
+  slashCommands?: { includedCommands: number; totalCommands: number; tokens: number };
+  apiUsage?: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_input_tokens: number;
+    cache_read_input_tokens: number;
+    context_window_tokens?: number;
+  } | null;
   [key: string]: unknown;
 }
 

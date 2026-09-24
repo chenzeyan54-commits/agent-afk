@@ -20,7 +20,9 @@ import { providerAbortReason } from '../abort-reason.js';
 import type {
   ProviderCommandInfo,
   ProviderCompactResult,
+  ProviderContextUsage,
   ProviderEvent,
+  ProviderMcpServerStatus,
   ProviderQuery,
   ProviderRewindConversationResult,
   RewindTarget,
@@ -33,14 +35,12 @@ import type {
   AgentModelInput,
   IAgentSession,
   InputStreamRef,
-  McpServerStatus,
   Message,
   ModelInfo,
   OutputEvent,
   PermissionMode,
   ResponseMetadata,
   RewindFilesResult,
-  SDKControlGetContextUsageResponse,
   SendMessageOptions,
   SessionIdentity,
   SessionMetadata,
@@ -417,10 +417,10 @@ export class AgentSession implements IAgentSession {
   getQuery(): ProviderQuery { return this.providerQuery; }
 
   supportedCommands(): Promise<ProviderCommandInfo[]> { return this.providerQuery.supportedCommands(); }
-  supportedModels(): Promise<ModelInfo[]> { return this.providerQuery.supportedModels() as Promise<ModelInfo[]>; }
-  supportedAgents(): Promise<AgentInfo[]> { return this.providerQuery.supportedAgents() as Promise<AgentInfo[]>; }
-  getContextUsage(): Promise<SDKControlGetContextUsageResponse> { return this.providerQuery.getContextUsage() as Promise<SDKControlGetContextUsageResponse>; }
-  mcpServerStatus(): Promise<McpServerStatus[]> { return this.providerQuery.mcpServerStatus() as Promise<McpServerStatus[]>; }
+  supportedModels(): Promise<ModelInfo[]> { return this.providerQuery.supportedModels(); }
+  supportedAgents(): Promise<AgentInfo[]> { return this.providerQuery.supportedAgents(); }
+  getContextUsage(): Promise<ProviderContextUsage> { return this.providerQuery.getContextUsage(); }
+  mcpServerStatus(): Promise<ProviderMcpServerStatus[]> { return this.providerQuery.mcpServerStatus(); }
   accountInfo(): Promise<AccountInfo> { return this.providerQuery.accountInfo(); }
   rewindFiles(userMessageId: string, options?: { dryRun?: boolean }): Promise<RewindFilesResult> { return this.providerQuery.rewindFiles(userMessageId, options); }
   compact(): Promise<ProviderCompactResult> { return compact.compactSession(this.makeCompactDeps()); }
